@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lecturer</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="wrap wide">
+
+  <header class="bar">
+    <h1>Lecturer</h1>
+    <span class="who"></span>
+  </header>
+
+  <div class="card" id="courseCard">
+    <label for="course">Course</label>
+    <select id="course"></select>
+    <details>
+      <summary class="note">Add a course</summary>
+      <div style="margin-top:12px">
+        <div class="inline" style="margin-bottom:10px">
+          <input id="cCode" placeholder="ACC1241" style="flex:1">
+          <input id="cTitle" placeholder="Course title" style="flex:2">
+          <input id="cPct" type="number" min="0" max="100" value="75" style="width:90px">
+          <button id="cAdd">Add</button>
+        </div>
+        <p class="note">The last field is the minimum attendance percentage.</p>
+      </div>
+    </details>
+    <div class="msg hide" id="cMsg"></div>
+  </div>
+
+  <div class="tabs">
+    <button id="tClass" class="on">Class</button>
+    <button id="tRoster">Class list</button>
+    <button id="tReport">Report</button>
+  </div>
+
+  <!-- ---------------- class ---------------- -->
+  <section id="paneClass">
+    <div class="card" id="startCard">
+      <div class="inline">
+        <input id="sTitle" placeholder="Lecture 4" style="flex:2">
+        <input id="sVenue" placeholder="Sci-Tech A" style="flex:2">
+        <button id="sStart">Start class</button>
+      </div>
+      <p class="note" style="margin-top:12px">
+        Your own phone anchors the room: it captures every window alongside the
+        students, and a cluster only counts as this class if it contains your
+        device.
+      </p>
+    </div>
+
+    <div class="card hide" id="liveCard">
+      <div class="code" id="joinCode">------</div>
+      <p class="note" id="liveMeta">-</p>
+
+      <div class="stats">
+        <div class="stat"><b id="stSubs">0</b><span>submitted</span></div>
+        <div class="stat"><b id="stWins">0</b><span>windows</span></div>
+        <div class="stat"><b id="stPresent">0</b><span>present</span></div>
+      </div>
+
+      <button id="wOpen">Open a listening window</button>
+      <div class="btnrow">
+        <button class="alt row" id="wAnalyse" disabled>Match this window</button>
+        <button class="alt row" id="sClose">End class</button>
+      </div>
+
+      <div class="mic hide" id="mic">
+        <div class="pulse hide" id="pulse"></div>
+        <div class="num" id="num">--</div>
+        <div class="lbl" id="lbl">-</div>
+      </div>
+
+      <div class="msg hide" id="lMsg"></div>
+    </div>
+
+    <div class="card hide" id="winCard">
+      <h2>Windows</h2>
+      <div class="wlist" id="wlist"></div>
+      <table id="evidence"></table>
+    </div>
+
+    <div class="card hide" id="regCard">
+      <h2>Register</h2>
+      <p class="note">
+        Acoustic matching returns <em>present</em> or <em>review</em>. It never
+        returns absent - that call is yours, and it sticks: once you set a
+        status by hand, later windows leave it alone.
+      </p>
+      <table id="register"></table>
+      <button class="alt" id="regCsv" style="margin-top:14px">Download register CSV</button>
+    </div>
+  </section>
+
+  <!-- ---------------- roster ---------------- -->
+  <section id="paneRoster" class="hide">
+    <div class="card">
+      <h2>Class list</h2>
+      <div class="inline">
+        <input id="rNum" placeholder="Student number" style="flex:1">
+        <button id="rAdd">Enrol</button>
+      </div>
+      <p class="note" style="margin-top:10px">
+        The student must already have an account. Enrolment is what lets them
+        join your class code at all.
+      </p>
+      <details>
+        <summary class="note">Paste a whole class list</summary>
+        <textarea id="rBulk" rows="5" placeholder="21001000&#10;21001001&#10;21001002"
+          style="width:100%;margin:10px 0;font:inherit;font-size:15px;padding:11px;
+                 border:1px solid var(--line);border-radius:9px;
+                 background:var(--bg);color:var(--text)"></textarea>
+        <button id="rBulkAdd">Enrol everyone listed</button>
+        <p class="note">One student number per line, or separated by commas.</p>
+      </details>
+      <div class="msg hide" id="rMsg"></div>
+      <table id="roster" style="margin-top:12px"></table>
+    </div>
+  </section>
+
+  <!-- ---------------- report ---------------- -->
+  <section id="paneReport" class="hide">
+    <div class="card">
+      <h2>Course attendance</h2>
+      <p class="note">
+        <em>Worst case</em> counts every unresolved window as an absence. The gap
+        between the two columns is how much still depends on your review.
+      </p>
+      <div class="btnrow" style="margin:12px 0">
+        <button class="alt row" id="repRefresh">Refresh</button>
+        <button class="alt row" id="repCsv">Download CSV</button>
+      </div>
+      <table id="report"></table>
+    </div>
+  </section>
+
+</div>
+
+<script type="module">
+import { requireProfile, signOut, now, readable } from './js/supabase.js';
+import * as api from './js/api.js';
+import { openMic, captureAt, analyse } from './js/fingerprint.js';
+import { TUNING } from './js/config.js';
+import { $, show, msg, clearMsg, esc, header, table, time, pill,
+         downloadCsv } from './js/ui.js';
+
+const profile = await requireProfile('lecturer');
+if (profile) { header(profile, signOut); start(); }
+
+let courses = [], courseId = null, klass = null;
+let mic = null, windows = [], shownWindow = null, poll = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------------- tabs ----------------
+const panes = { tClass: 'paneClass', tRoster: 'paneRoster', tReport: 'paneReport' };
+for (const id of Object.keys(panes)) {
+  $(id).onclick = () => {
+    for (const k of Object.keys(panes)) {
+      $(k).classList.toggle('on', k === id);
+      show(panes[k], k === id);
+    }
+    if (id === 'tRoster') loadRoster();
+    if (id === 'tReport') loadReport();
+  };
+}
+
+async function start() {
+  $('cAdd').onclick    = addCourse;
+  $('course').onchange = () => { courseId = $('course').value; resume(); };
+  $('sStart').onclick  = startClass;
+  $('sClose').onclick  = endClass;
+  $('wOpen').onclick   = openWindow;
+  $('wAnalyse').onclick = analyseCurrent;
+  $('rAdd').onclick    = enrol;
+  $('rBulkAdd').onclick = enrolBulk;
+  $('repRefresh').onclick = loadReport;
+  $('repCsv').onclick  = exportReport;
+  $('regCsv').onclick  = exportRegister;
+  await loadCourses();
+}
+
+// ---------------- courses ----------------
+
+async function loadCourses() {
+  try {
+    courses = await api.myCourses();
+  } catch (e) { return msg('cMsg', readable(e), 'bad'); }
+
+  $('course').innerHTML = courses.length
+    ? courses.map(c => `<option value="${c.id}">${esc(c.code)} - ${esc(c.title)}</option>`).join('')
+    : '<option value="">No courses yet - add one below</option>';
+  courseId = courses.length ? courses[0].id : null;
+  $('course').value = courseId || '';
+  if (courseId) resume();
+}
+
+async function addCourse() {
+  const code = $('cCode').value.trim(), title = $('cTitle').value.trim();
+  const pct = parseInt($('cPct').value, 10);
+  if (!code || !title) return msg('cMsg', 'Course code and title are required.', 'bad');
+  try {
+    await api.createCourse(profile.id, code, title, isNaN(pct) ? 75 : pct);
+    $('cCode').value = ''; $('cTitle').value = '';
+    clearMsg('cMsg');
+    await loadCourses();
+  } catch (e) { msg('cMsg', readable(e), 'bad'); }
+}
+
+/** pick up a class session left open earlier (a refresh, a flat battery) */
+async function resume() {
+  klass = null;
+  show('liveCard', false); show('startCard', true);
+  show('winCard', false); show('regCard', false);
+  if (!courseId) return;
+  try {
+    const open = await api.openSessionsOf(courseId);
+    if (open.length) { klass = open[0]; await enterClass(true); }
+  } catch (e) { /* nothing open is the normal case */ }
+}
+
+// ---------------- the class ----------------
+
+async function startClass() {
+  if (!courseId) return msg('cMsg', 'Add a course first.', 'bad');
+  try {
+    klass = await api.openClassSession(
+      courseId, $('sTitle').value.trim(), $('sVenue').value.trim());
+    await enterClass(false);
+  } catch (e) { msg('cMsg', readable(e), 'bad'); }
+}
+
+async function enterClass(resumed) {
+  show('startCard', false);
+  show('liveCard', true);
+  show('winCard', true);
+  show('regCard', true);
+  $('joinCode').textContent = klass.join_code;
+  $('liveMeta').textContent =
+    (klass.title || 'Class') + (klass.venue ? ' - ' + klass.venue : '') +
+    ' - students enter this code on their phones.';
+  if (resumed) msg('lMsg', 'Resumed a class you left open.', 'warn');
+  await refreshWindows();
+  await refreshRegister();
+}
+
+async function endClass() {
+  if (!confirm('End this class? Students can no longer check in.')) return;
+  try { await api.closeClassSession(klass.id); } catch (e) { return msg('lMsg', readable(e), 'bad'); }
+  if (poll) { clearInterval(poll); poll = null; }
+  if (mic) { await mic.close(); mic = null; }
+  msg('lMsg', 'Class ended.', 'warn');
+  $('wOpen').disabled = true;
+  $('wAnalyse').disabled = true;
+  await refreshRegister();
+}
+
+// ---------------- windows ----------------
+
+async function openWindow() {
+  clearMsg('lMsg');
+  $('wOpen').disabled = true;
+  $('wAnalyse').disabled = true;
+
+  // this click is the permission gesture; keep the microphone for later windows
+  if (!mic) {
+    try {
+      mic = await openMic(now, TUNING.MIC_BUFFER_SECONDS);
+    } catch (e) {
+      $('wOpen').disabled = false;
+      return msg('lMsg', 'Microphone blocked: ' + e.message, 'bad');
+    }
+  }
+
+  let win;
+  try {
+    win = await api.openWindow(klass.id, TUNING.CAPTURE_SECONDS);
+  } catch (e) {
+    $('wOpen').disabled = false;
+    return msg('lMsg', readable(e), 'bad');
+  }
+
+  const captureAtMs = new Date(win.opens_at).getTime() + TUNING.LEAD_MS;
+  shownWindow = win.id;
+  show('mic', true);
+  await refreshWindows();
+  startPolling(win.id);
+
+  try {
+    const cut = await captureAt(mic, captureAtMs, win.seconds, now, left => {
+      if (left > 0) {
+        $('num').textContent = Math.ceil(left);
+        $('lbl').textContent = 'Everyone records in';
+      } else {
+        show('pulse', true);
+        $('num').textContent = Math.max(0, Math.ceil(win.seconds + left));
+        $('lbl').textContent = 'Listening';
+      }
+    });
+
+    show('pulse', false);
+    $('num').textContent = '...';
+    $('lbl').textContent = 'Anchoring';
+
+    const fp = analyse(cut.samples);
+    await api.submitCapture(win.id, profile.id, fp);
+
+    $('num').textContent = fp.hashes.length;
+    $('lbl').textContent = 'anchor landmarks captured';
+    $('wOpen').disabled = false;
+    $('wAnalyse').disabled = false;
+
+    if (fp.entropy.score < TUNING.LOW_ENTROPY)
+      msg('lMsg', 'The room is very quiet (entropy ' + fp.entropy.score.toFixed(2) +
+        '). Matching will not be decisive - open another window while people are talking.', 'warn');
+    else
+      msg('lMsg', 'Anchored. Students have until the window closes; ' +
+        'press Match this window when you are ready.', 'ok');
+  } catch (e) {
+    $('wOpen').disabled = false;
+    msg('lMsg', readable(e), 'bad');
+  }
+}
+
+function startPolling(windowId) {
+  if (poll) clearInterval(poll);
+  poll = setInterval(async () => {
+    try { $('stSubs').textContent = await api.submissionCount(windowId); }
+    catch (e) { /* transient */ }
+  }, 2500);
+}
+
+async function analyseCurrent() {
+  if (!shownWindow) return;
+  $('wAnalyse').disabled = true;
+  msg('lMsg', 'Matching...', 'warn');
+  try {
+    const res = await api.analyseWindow(shownWindow);
+    if (poll) { clearInterval(poll); poll = null; }
+    msg('lMsg',
+      'Matched ' + res.submissions + ' devices. Cluster of ' + res.clusterSize +
+      (res.lecturerBound ? ', anchored to your phone' : ' - WITHOUT your phone, so it is not bound to this class') +
+      '. Landmarks deleted.',
+      res.lecturerBound ? 'ok' : 'warn');
+  } catch (e) {
+    $('wAnalyse').disabled = false;
+    return msg('lMsg', readable(e), 'bad');
+  }
+  await refreshWindows();
+  await showEvidence(shownWindow);
+  await refreshRegister();
+}
+
+async function refreshWindows() {
+  try { windows = await api.windowsOf(klass.id); } catch (e) { return; }
+  $('stWins').textContent = windows.filter(w => w.analysed_at).length;
+  $('wlist').innerHTML = windows.map(w =>
+    `<button data-w="${w.id}" class="${w.id === shownWindow ? 'on' : ''}` +
+    `${w.analysed_at ? '' : ' pending'}">Window ${w.idx + 1}` +
+    `${w.analysed_at ? ' &middot; ' + w.cluster_size : ' &middot; open'}</button>`).join('');
+  for (const b of $('wlist').querySelectorAll('button'))
+    b.onclick = () => { shownWindow = b.dataset.w; refreshWindows(); showEvidence(shownWindow); };
+}
+
+async function showEvidence(windowId) {
+  let rows = [];
+  try { rows = await api.evidenceOf(windowId); } catch (e) { return; }
+  rows.sort((a, b) => (b.cluster_member - a.cluster_member) ||
+    (a.aa_profiles?.display_name || '').localeCompare(b.aa_profiles?.display_name || ''));
+  table('evidence', ['Student', 'Number', 'Verdict', 'Peers', 'Why'],
+    rows.map(r => [
+      esc(r.aa_profiles?.display_name || r.user_id.slice(0, 8)),
+      esc(r.aa_profiles?.student_number || '-'),
+      pill(r.confidence_band),
+      '<span class="num">' + r.corroborating_devices + '</span>',
+      '<span class="reasons">' + (r.reasons || []).map(x =>
+        '<code>' + esc(x.code) + '</code>' + esc(x.detail)).join('<br>') + '</span>'
+    ]));
+}
+
+// ---------------- register ----------------
+
+let register = [];
+
+async function refreshRegister() {
+  try { register = await api.registerOf(klass.id); } catch (e) { return; }
+  register.sort((a, b) => (a.aa_profiles?.display_name || '')
+    .localeCompare(b.aa_profiles?.display_name || ''));
+  $('stPresent').textContent = register.filter(r => r.status === 'present').length;
+
+  table('register', ['Student', 'Number', 'Status', 'Windows', 'Set'],
+    register.map(r => [
+      esc(r.aa_profiles?.display_name || '-'),
+      esc(r.aa_profiles?.student_number || '-'),
+      pill(r.status) + (r.overridden_at ? ' <span class="note">by you</span>' : ''),
+      '<span class="num">' + (r.windows_analysed
+        ? r.windows_present + ' / ' + r.windows_analysed : '-') + '</span>',
+      `<select data-s="${r.student_id}" class="setStatus"
+               style="margin:0;padding:6px 8px;font-size:.82rem">
+         <option value="">-</option>
+         <option value="present">present</option>
+         <option value="absent">absent</option>
+         <option value="excused">excused</option>
+         <option value="review">review</option>
+       </select>`
+    ]));
+
+  for (const sel of document.querySelectorAll('.setStatus')) {
+    sel.onchange = async () => {
+      const status = sel.value;
+      if (!status) return;
+      const note = prompt('Note for this change (optional):') || null;
+      try {
+        await api.overrideAttendance(klass.id, sel.dataset.s, status, note);
+        await refreshRegister();
+      } catch (e) { msg('lMsg', readable(e), 'bad'); }
+    };
+  }
+}
+
+function exportRegister() {
+  downloadCsv(
+    (klass.join_code || 'class') + '-register.csv',
+    ['student_number', 'name', 'status', 'source', 'confidence',
+     'windows_present', 'windows_analysed', 'override_note'],
+    register.map(r => [
+      r.aa_profiles?.student_number, r.aa_profiles?.display_name, r.status,
+      r.source, r.confidence, r.windows_present, r.windows_analysed, r.override_note
+    ]));
+}
+
+// ---------------- roster ----------------
+
+async function loadRoster() {
+  if (!courseId) return;
+  let rows = [];
+  try { rows = await api.roster(courseId); } catch (e) { return msg('rMsg', readable(e), 'bad'); }
+  rows.sort((a, b) => (a.aa_profiles?.display_name || '')
+    .localeCompare(b.aa_profiles?.display_name || ''));
+  table('roster', ['Student', 'Number'], rows.map(r => [
+    esc(r.aa_profiles?.display_name || '-'),
+    esc(r.aa_profiles?.student_number || '-')
+  ]));
+}
+
+async function enrol() {
+  const num = $('rNum').value.trim();
+  if (!num) return;
+  try {
+    const p = await api.enrolByNumber(courseId, num);
+    $('rNum').value = '';
+    msg('rMsg', 'Enrolled ' + (p.display_name || num) + '.', 'ok');
+    await loadRoster();
+  } catch (e) { msg('rMsg', readable(e), 'bad'); }
+}
+
+/**
+ * One at a time is unusable for a real cohort. Numbers that have no account yet
+ * are reported rather than swallowed - that is the common case at the start of
+ * a semester, and the lecturer needs to know who still has to sign up.
+ */
+async function enrolBulk() {
+  const numbers = [...new Set($('rBulk').value.split(/[\s,;]+/)
+    .map(s => s.trim()).filter(Boolean))];
+  if (!numbers.length) return;
+  if (!courseId) return msg('rMsg', 'Pick a course first.', 'bad');
+
+  $('rBulkAdd').disabled = true;
+  const missing = [];
+  let added = 0;
+  for (const n of numbers) {
+    try { await api.enrolByNumber(courseId, n); added++; }
+    catch (e) { missing.push(n); }
+  }
+  $('rBulkAdd').disabled = false;
+
+  msg('rMsg',
+    'Enrolled ' + added + ' of ' + numbers.length + '.' +
+    (missing.length ? ' No account yet for: ' + missing.join(', ') +
+      '. They have to create an account first.' : ''),
+    missing.length ? 'warn' : 'ok');
+  if (added) $('rBulk').value = missing.join('\n');
+  await loadRoster();
+}
+
+// ---------------- report ----------------
+
+let report = [];
+
+async function loadReport() {
+  if (!courseId) return;
+  try { report = await api.courseReport(courseId); } catch (e) { return; }
+  const course = courses.find(c => c.id === courseId);
+  table('report',
+    ['Student', 'Number', 'Present', 'Unresolved', 'Attendance', 'Worst case', ''],
+    report.map(r => [
+      esc(r.display_name), esc(r.student_number || '-'),
+      '<span class="num">' + r.present + ' / ' + r.sessions_counted + '</span>',
+      '<span class="num">' + r.unresolved + '</span>',
+      '<span class="num">' + Number(r.percent).toFixed(0) + '%</span>',
+      '<span class="num">' + Number(r.worst_case_percent).toFixed(0) + '%</span>',
+      r.meets_requirement ? pill('present')
+        : r.at_risk ? pill('review') : pill('absent')
+    ]));
+  if (course)
+    $('repRefresh').textContent = 'Refresh (needs ' + course.min_attendance_pct + '%)';
+}
+
+function exportReport() {
+  const course = courses.find(c => c.id === courseId);
+  downloadCsv(
+    (course ? course.code : 'course') + '-attendance.csv',
+    ['student_number', 'name', 'sessions_counted', 'present', 'unresolved',
+     'absent', 'excused', 'percent', 'worst_case_percent', 'meets_requirement'],
+    report.map(r => [
+      r.student_number, r.display_name, r.sessions_counted, r.present,
+      r.unresolved, r.absent, r.excused, r.percent, r.worst_case_percent,
+      r.meets_requirement
+    ]));
+}
+
+window.addEventListener('pagehide', () => { if (mic) mic.close(); });
+</script>
+</body>
+</html>

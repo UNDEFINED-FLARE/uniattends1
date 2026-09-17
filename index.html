@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uni Attend</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="bar">
+    <h1>Uni Attend</h1>
+    <span class="who"></span>
+  </header>
+  <p class="sub">Attendance proved by what the room sounded like.</p>
+
+  <div class="card hide" id="busy"><p class="note">Checking your session&hellip;</p></div>
+
+  <div class="card hide" id="auth">
+    <div class="tabs">
+      <button id="tabIn" class="on">Sign in</button>
+      <button id="tabUp">Create account</button>
+    </div>
+
+    <label for="email">University email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="you@univen.ac.za">
+
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+
+    <div id="upOnly" class="hide">
+      <label for="name">Full name</label>
+      <input id="name" autocomplete="name" placeholder="Full name">
+
+      <label for="role">I am a</label>
+      <select id="role">
+        <option value="student">Student</option>
+        <option value="lecturer">Lecturer</option>
+      </select>
+
+      <div id="snoWrap">
+        <label for="sno">Student number</label>
+        <input id="sno" inputmode="numeric" autocomplete="off" placeholder="21001234">
+      </div>
+    </div>
+
+    <button id="go">Sign in</button>
+    <button class="link" id="forgot" style="margin-top:4px">Forgot your password?</button>
+    <div class="msg hide" id="msg"></div>
+  </div>
+
+  <div class="card hide" id="profileForm">
+    <h2>Finish your profile</h2>
+    <p class="note">
+      You are signed in as <strong id="whoEmail">-</strong>, and this account has
+      no attendance profile yet.
+      <button class="link" id="notMe">Not the right account?</button>
+    </p>
+    <label for="pname">Full name</label>
+    <input id="pname" placeholder="Full name">
+    <label for="prole">I am a</label>
+    <select id="prole">
+      <option value="student">Student</option>
+      <option value="lecturer">Lecturer</option>
+    </select>
+    <div id="psnoWrap">
+      <label for="psno">Student number</label>
+      <input id="psno" inputmode="numeric" placeholder="21001234">
+    </div>
+    <button id="saveProfile">Save and continue</button>
+    <div class="msg hide" id="pMsg"></div>
+  </div>
+
+  <div class="card" id="about">
+    <h2>How it decides</h2>
+    <ol class="steps">
+      <li>Every device in the venue records the <em>same</em> few seconds, taken
+          from the lecturer's window on the server's clock.</li>
+      <li>Each phone reduces its audio to a few hundred spectral landmarks and
+          discards the recording. Audio never leaves the device.</li>
+      <li>The server compares landmark sets pairwise, keeping only matches whose
+          timing alignment spikes rather than scatters.</li>
+      <li>Devices that heard the same air form a cluster. The cluster has to
+          contain the lecturer's phone to count as this class.</li>
+      <li>Landmarks are deleted the moment the verdict exists. Only the verdict
+          and its reasons survive.</li>
+    </ol>
+    <p class="note">
+      This proves a <em>phone</em> was in the room, not who was holding it, so it
+      never marks anyone absent on its own: a device that does not cluster is
+      routed to the lecturer for review.
+    </p>
+  </div>
+
+</div>
+
+<script type="module">
+import { sb, signIn, signUp, currentProfile, readable, sendPasswordReset }
+  from './js/supabase.js';
+import { $, show, msg, clearMsg } from './js/ui.js';
+
+let mode = 'in';
+
+const setMode = m => {
+  mode = m;
+  $('tabIn').classList.toggle('on', m === 'in');
+  $('tabUp').classList.toggle('on', m === 'up');
+  show('upOnly', m === 'up');
+  $('go').textContent = m === 'in' ? 'Sign in' : 'Create account';
+  $('password').autocomplete = m === 'in' ? 'current-password' : 'new-password';
+  clearMsg('msg');
+};
+$('tabIn').onclick = () => setMode('in');
+$('tabUp').onclick = () => setMode('up');
+$('role').onchange = () => show('snoWrap', $('role').value === 'student');
+$('prole').onchange = () => show('psnoWrap', $('prole').value === 'student');
+
+const land = p => location.replace(p.role === 'lecturer' ? 'lecturer.html' : 'student.html');
+
+async function route() {
+  show('busy', true);
+  try {
+    const { data } = await sb.auth.getSession();
+    if (!data.session) { show('busy', false); show('auth', true); return; }
+    const profile = await currentProfile();
+    show('busy', false);
+    if (profile) return land(profile);
+    await showProfileForm();        // signed in, but no aa_profiles row
+  } catch (e) {
+    show('busy', false); show('auth', true);
+    msg('msg', readable(e), 'bad');
+  }
+}
+
+$('go').onclick = async () => {
+  const email = $('email').value.trim();
+  const password = $('password').value;
+  if (!email || !password) return msg('msg', 'Email and password are required.', 'bad');
+  $('go').disabled = true;
+  clearMsg('msg');
+  try {
+    if (mode === 'in') {
+      await signIn(email, password);
+      const profile = await currentProfile();
+      if (profile) return land(profile);
+      show('auth', false); await showProfileForm();
+    } else {
+      const role = $('role').value;
+      const displayName = $('name').value.trim();
+      const studentNumber = $('sno').value.trim();
+      if (!displayName) throw new Error('Enter your full name.');
+      if (role === 'student' && !studentNumber)
+        throw new Error('Enter your student number.');
+      const { needsConfirmation } =
+        await signUp({ email, password, displayName, role, studentNumber });
+      if (needsConfirmation) {
+        return msg('msg',
+          'Account created. Confirm the link in your email, then sign in.', 'ok');
+      }
+      const profile = await currentProfile();
+      if (profile) return land(profile);
+      show('auth', false); await showProfileForm();
+    }
+  } catch (e) {
+    msg('msg', readable(e), 'bad');
+  } finally {
+    $('go').disabled = false;
+  }
+};
+
+async function showProfileForm() {
+  const { data: u } = await sb.auth.getUser();
+  $('whoEmail').textContent = u?.user?.email || 'this account';
+  show('profileForm', true);
+}
+
+$('notMe').onclick = async () => {
+  await sb.auth.signOut();
+  location.reload();
+};
+
+$('forgot').onclick = async () => {
+  const email = $('email').value.trim();
+  if (!email) return msg('msg', 'Type your email first, then press this.', 'bad');
+  try {
+    await sendPasswordReset(email);
+    msg('msg', 'If that address has an account, a reset link is on its way.', 'ok');
+  } catch (e) { msg('msg', readable(e), 'bad'); }
+};
+
+$('saveProfile').onclick = async () => {
+  const role = $('prole').value;
+  const display_name = $('pname').value.trim();
+  const student_number = $('psno').value.trim();
+  if (!display_name) return msg('pMsg', 'Enter your full name.', 'bad');
+  if (role === 'student' && !student_number)
+    return msg('pMsg', 'Enter your student number.', 'bad');
+
+  $('saveProfile').disabled = true;
+  const { data: u } = await sb.auth.getUser();
+  const { error } = await sb.from('aa_profiles').insert({
+    id: u.user.id, role, display_name,
+    student_number: role === 'student' ? student_number : null
+  });
+  $('saveProfile').disabled = false;
+  if (error) return msg('pMsg', readable(error), 'bad');
+  land({ role });
+};
+
+route();
+</script>
+</body>
+</html>
