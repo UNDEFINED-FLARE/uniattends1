@@ -1,263 +1,11 @@
+/* =====================================================================
+   LOCATION ENGINE — GPS polygon containment and the check-in score.
+   Pure functions, shared unchanged with univen.html.
+   ===================================================================== */
 const DEFAULT_RADIUS_METERS = 50;
-const ADMIN_EMAIL = "kekanakarabouf@gmail.com"; // set the password via Lecturer > Register once
 
-/* ---------------------------------------------------------------------
-   3. STATE
---------------------------------------------------------------------- */
-let currentRole = null;
-let studentProfile = null;
-let lecturerProfile = null;
-let lecMode = 'login';
+const GPS_GOOD_ENOUGH_ACCURACY = 20;     // metres — stop early once we get a fix this good;
 
-let historyFilter = 'all';
-let studSearchQ = '';
-let dashSessionsRef = null;
-let studListRef = null;
-
-let qrTimerInterval = null;
-let currentSessionId = null;
-let expireMinutes = 10;
-let capturedSessionLocation = null;
-let reflectionRequired = false;
-
-let html5QrScanner = null;
-let scanContext = null;      // 'session', or null when idle
-let scanLocked = false;
-let pendingSessionId = null;
-let pendingSession = null;
-let pendingGps = null;
-let pendingFix = null;            // the averaged, outlier-filtered fix behind the current check-in
-let pendingVerification = null;   // its confidence score, stored with the attendance record
-let pendingSessionToken = null;   // rotating token captured from the scanned QR
-let tokenRotateInterval = null;   // lecturer side: regenerates the live QR code
-let trendChartInstance = null;
-let lecturerClasses = {};       // classId -> { className, moduleCode, students:{studentNumber:true}, ... } for the logged-in lecturer
-let mcParsedStudents = null;    // student numbers parsed from the most recently uploaded CSV, awaiting "Create Class"
-let activeClassId = null;       // class currently open in the roster screen
-
-let allVenues = {};             // venueId -> { name, polygon:[{lat,lng},...], centroid, ... } — all admin-managed venues, shared by every lecturer and visible to students on the venues map
-let drawMap = null;             // Leaflet map instance for the venue-drawing screen
-let drawVertices = [];          // [{lat,lng}, ...] points placed so far while drawing
-let drawMarkers = [];           // Leaflet marker layers for each placed vertex
-let drawPolygonLayer = null;    // Leaflet polygon layer preview
-let editingVenueId = null;      // set when re-drawing/editing an existing saved venue
-let studentVenuesMap = null;    // Leaflet map instance for the student-facing Venues Map screen
-let previousActiveScreenId = null; // tracks the last active screen so we can clean up GPS watches on navigation
-
-let walkMap = null;             // Leaflet map instance for the Walk & Trace screen
-let walkWatchId = null;         // navigator.geolocation.watchPosition handle, so it can be cleared
-let walkVertices = [];          // [{lat,lng}, ...] points captured so far while walking
-let walkMarkers = [];           // Leaflet marker layers for each captured vertex
-let walkPolygonLayer = null;    // Leaflet polygon preview layer
-let walkLiveMarker = null;      // Leaflet marker showing the walker's live current position
-let walkAutoTrace = false;      // whether points are being logged automatically as the user walks
-let walkLastLoggedPoint = null; // last point logged, used to space out auto-traced points
-
-let lecturerTimetables = {};    // timetableId -> saved recurring-class template
-let editingTimetableId = null;  // set when editing an existing timetable entry
-let ttExpireMinutes = 10;       // QR expiry chosen on the add/edit timetable form
-let ttReflectionRequired = false; // reflection toggle state on the add/edit timetable form
-
-let analyticsSessions = [];        // all of the lecturer's sessions, cached for the Analytics screen
-let analyticsChartInstance = null; // Chart.js instance for the attendance-trend chart
-let lastAnalyticsBreakdown = null; // most recently computed per-student breakdown, used by the export buttons
-
-/* ---------------------------------------------------------------------
-   4. HELPERS
---------------------------------------------------------------------- */
-const $ = id => document.getElementById(id);
-
-function esc(s){
-  if(s===undefined||s===null) return '';
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-function initials(name){
-  if(!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0]||'') + (parts[1]?.[0]||'')).toUpperCase() || name[0].toUpperCase();
-}
-function countWords(text){
-  if(!text) return 0;
-  const trimmed = text.trim();
-  if(!trimmed) return 0;
-  return trimmed.split(/\s+/).length;
-}
-// Parses an uploaded CSV/plain-text file into a de-duplicated list of
-// student numbers. Accepts one number per line, or the first column
-// of a multi-column CSV. A single obvious header row (e.g. "Student
-// Number") is detected and skipped automatically.
-function parseCsvStudentNumbers(text){
-  const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-  const numbers = [];
-  const seen = new Set();
-  lines.forEach(line=>{
-    let firstCol = line.split(',')[0].trim();
-    firstCol = firstCol.replace(/^"|"$/g, '').trim();
-    if(!firstCol) return;
-    if(/^(student ?number|studentno|std ?no|number|id)$/i.test(firstCol)) return; // skip header row
-    if(seen.has(firstCol)) return;
-    seen.add(firstCol);
-    numbers.push(firstCol);
-  });
-  return numbers;
-}
-// Parses a CSV/plain-text file of student numbers: one per line, or the
-// first column of a multi-column CSV. Dedupes and skips an obvious
-// header row (e.g. "Student Number").
-function parseCsvStudentNumbers(text){
-  const lines = String(text||'').split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-  const numbers = new Set();
-  lines.forEach(line=>{
-    let firstCol = line.split(',')[0].trim();
-    firstCol = firstCol.replace(/^"|"$/g,'').trim();
-    if(!firstCol) return;
-    if(/^(student.?number|std.?no|number|studentno)$/i.test(firstCol)) return; // skip header row
-    numbers.add(firstCol);
-  });
-  return Array.from(numbers);
-}
-let toastTimer;
-function toast(msg, type=''){
-  const el = $('toast');
-  el.textContent = msg;
-  el.className = type ? `show ${type}` : 'show';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>{ el.className = ''; }, 3200);
-}
-function setStatus(el, msg, type){
-  if(!el) return;
-  el.textContent = msg;
-  el.className = 'status-msg' + (msg ? ' show '+type : '');
-}
-function haversineMeters(lat1, lng1, lat2, lng2){
-  const R = 6371000;
-  const toRad = d => d * Math.PI / 180;
-  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
-  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-// Flattens lat/lng to local metres around an origin point — accurate
-// enough for building-sized areas, and lets us do plain 2D geometry
-// (point-in-polygon, distance-to-edge) instead of spherical math.
-function projectToMeters(lat, lng, originLat, originLng){
-  const x = (lng - originLng) * Math.cos(originLat * Math.PI/180) * 111320;
-  const y = (lat - originLat) * 110540;
-  return { x, y };
-}
-function pointInPolygon(pt, poly){
-  let inside = false;
-  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
-    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
-    const intersect = ((yi>pt.y) !== (yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi)+xi);
-    if(intersect) inside = !inside;
-  }
-  return inside;
-}
-function distToSegmentMeters(p, a, b){
-  const dx=b.x-a.x, dy=b.y-a.y;
-  const lenSq = dx*dx+dy*dy;
-  let t = lenSq===0 ? 0 : ((p.x-a.x)*dx + (p.y-a.y)*dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  const projX = a.x + t*dx, projY = a.y + t*dy;
-  return Math.hypot(p.x-projX, p.y-projY);
-}
-function distToPolygonEdgeMeters(pt, poly){
-  let min = Infinity;
-  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
-    const d = distToSegmentMeters(pt, poly[j], poly[i]);
-    if(d<min) min = d;
-  }
-  return min;
-}
-// Checks a GPS fix against a drawn venue boundary (array of {lat,lng}).
-// Inside the polygon => always accepted. Just outside => accepted only
-// if the distance to the nearest edge is within the reading's own GPS
-// accuracy margin, same tolerance philosophy as the circular check.
-function isWithinVenuePolygon(gps, polygonLatLng){
-  if(!polygonLatLng || polygonLatLng.length < 3) return { ok:false, distance:null };
-  const origin = polygonLatLng[0];
-  const polyM = polygonLatLng.map(v=>projectToMeters(v.lat, v.lng, origin.lat, origin.lng));
-  const ptM = projectToMeters(gps.lat, gps.lng, origin.lat, origin.lng);
-  if(pointInPolygon(ptM, polyM)) return { ok:true, distance:0 };
-  const edgeDist = distToPolygonEdgeMeters(ptM, polyM);
-  return { ok: edgeDist <= (gps.accuracy||0), distance: edgeDist };
-}
-function polygonCentroid(points){
-  let x=0, y=0;
-  points.forEach(p=>{ x+=p.lat; y+=p.lng; });
-  return { lat: x/points.length, lng: y/points.length };
-}
-const GPS_MAX_ACCEPTABLE_ACCURACY = 100; // metres — readings worse than this are rejected outright
-const GPS_GOOD_ENOUGH_ACCURACY = 20;     // metres — stop early once we get a fix this good
-
-// Takes several GPS readings over a short window and keeps the most
-// accurate one, instead of trusting whatever the very first fix says.
-// A single getCurrentPosition() call can easily be 50-100m+ off
-// indoors; watching for a few seconds and keeping the tightest
-// accuracy value gives a materially better result.
-function getBestGpsFix(timeoutMs = 8000, minAcceptableAccuracy = GPS_GOOD_ENOUGH_ACCURACY){
-  return new Promise((resolve, reject)=>{
-    if(!navigator.geolocation){ reject(new Error('Geolocation not supported')); return; }
-    let best = null;
-    let settled = false;
-    const watchId = navigator.geolocation.watchPosition(
-      pos => {
-        const reading = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: Date.now() };
-        if(!best || reading.accuracy < best.accuracy) best = reading;
-        if(reading.accuracy <= minAcceptableAccuracy && !settled){
-          settled = true;
-          navigator.geolocation.clearWatch(watchId);
-          resolve(best);
-        }
-      },
-      err => {
-        if(!settled){
-          settled = true;
-          navigator.geolocation.clearWatch(watchId);
-          if(best) resolve(best); else reject(new Error(err.message));
-        }
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs }
-    );
-    setTimeout(()=>{
-      if(!settled){
-        settled = true;
-        navigator.geolocation.clearWatch(watchId);
-        if(best) resolve(best); else reject(new Error('Could not get a GPS fix in time'));
-      }
-    }, timeoutMs);
-  });
-}
-// Kept as an alias so any existing callers still work.
-function getGpsPosition(timeoutMs, minAcceptableAccuracy){ return getBestGpsFix(timeoutMs, minAcceptableAccuracy); }
-
-/* ---------------------------------------------------------------------
-   4b. ATTENDANCE VERIFICATION ENGINE
-
-   A single GPS fix is a guess, not a fact. Indoors it can sit 50m from
-   where the phone actually is, and it can jump between two readings
-   taken a second apart. So check-in never asks the yes/no question
-   "is this point inside the room?". It gathers evidence, scores it,
-   and lands on one of three outcomes: verified, needs review, or
-   rejected. Six independent signals feed the score:
-
-     1. Boundary probability — how much of the fix's own uncertainty
-        overlaps the venue polygon, rather than where its centre landed.
-     2. Sample agreement    — how many of the individual readings agree,
-        so one wild jump can't carry the decision.
-     3. Precision           — how tight the averaged fix actually is.
-     4. Room consensus      — how far the student sits from the middle
-        of everyone already checked in. Free, needs no hardware, and
-        gets sharper the more students use it.
-     5. Presence proof      — whether they scanned a live rotating code
-        from the lecturer's screen, or typed an ID they could have been
-        sent by a friend.
-     6. Integrity           — mock-location and replay heuristics, plus
-        one-device-per-session binding.
-
-   Anything borderline is marked present and queued for the lecturer to
-   confirm. A real student is never locked out over a bad satellite fix.
---------------------------------------------------------------------- */
 const VERIFY_CFG = {
   windowMs: 9000,        // how long to keep sampling
   sampleEveryMs: 1200,
@@ -269,17 +17,67 @@ const VERIFY_CFG = {
   maxSpeedMps: 12        // ~43 km/h between two readings = not a walking student
 };
 
+function haversineMeters(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Flattens lat/lng to local metres around an origin point — accurate
+// enough for building-sized areas, and lets us do plain 2D geometry
+// (point-in-polygon, distance-to-edge) instead of spherical math.
+function projectToMeters(lat, lng, originLat, originLng){
+  const x = (lng - originLng) * Math.cos(originLat * Math.PI/180) * 111320;
+  const y = (lat - originLat) * 110540;
+  return { x, y };
+}
+
+function pointInPolygon(pt, poly){
+  let inside = false;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+    const intersect = ((yi>pt.y) !== (yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi)+xi);
+    if(intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function distToSegmentMeters(p, a, b){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const lenSq = dx*dx+dy*dy;
+  let t = lenSq===0 ? 0 : ((p.x-a.x)*dx + (p.y-a.y)*dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = a.x + t*dx, projY = a.y + t*dy;
+  return Math.hypot(p.x-projX, p.y-projY);
+}
+
+function distToPolygonEdgeMeters(pt, poly){
+  let min = Infinity;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const d = distToSegmentMeters(pt, poly[j], poly[i]);
+    if(d<min) min = d;
+  }
+  return min;
+}
+
+function polygonCentroid(points){
+  let x=0, y=0;
+  points.forEach(p=>{ x+=p.lat; y+=p.lng; });
+  return { lat: x/points.length, lng: y/points.length };
+}
+
 function medianOf(arr){
   if(!arr.length) return 0;
   const a = [...arr].sort((x,y)=>x-y), m = a.length>>1;
   return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
 }
+
 function logistic(x, midpoint, steepness){
   return 1/(1+Math.exp((x-midpoint)/Math.max(0.001, steepness)));
 }
 
-/* Persistent per-device id. Used to catch the attack GPS accuracy can
-   never catch: one phone checking in for several students. */
 function getDeviceId(){
   let id = null;
   try{ id = localStorage.getItem('uvn_device_id'); }catch(e){}
@@ -289,14 +87,7 @@ function getDeviceId(){
   }
   return id;
 }
-function findDeviceConflict(session, deviceId, myStudentNumber){
-  const hit = Object.entries(session.attendanceRecords||{})
-    .find(([sn, r]) => r && r.deviceId === deviceId && sn !== myStudentNumber);
-  return hit ? { studentNumber: hit[0], name: hit[1].name } : null;
-}
 
-/* Repeated fresh readings over a short window. Duplicates are kept on
-   purpose — an identical stream is itself evidence of a faked feed. */
 function collectGpsSamples(onSample){
   return new Promise((resolve, reject)=>{
     if(!navigator.geolocation){ reject(new Error('This device cannot report its location')); return; }
@@ -334,10 +125,6 @@ function collectGpsSamples(onSample){
   });
 }
 
-/* Collapses the samples into one fix, throwing away outliers first.
-   Averaging n independent readings shrinks random error by roughly
-   sqrt(n), but the result is never claimed to be tighter than the
-   spread we actually observed. */
 function robustFix(samples){
   const lats = samples.map(s=>s.lat), lngs = samples.map(s=>s.lng);
   const mLat = medianOf(lats), mLng = medianOf(lngs);
@@ -365,7 +152,6 @@ function robustFix(samples){
            total: samples.length, timestamp: Date.now() };
 }
 
-/* Negative inside the polygon, positive outside — distance in metres. */
 function signedDistanceToPolygon(pt, polygonLatLng){
   const origin = polygonLatLng[0];
   const polyM = polygonLatLng.map(v=>projectToMeters(v.lat, v.lng, origin.lat, origin.lng));
@@ -373,9 +159,7 @@ function signedDistanceToPolygon(pt, polygonLatLng){
   const d = distToPolygonEdgeMeters(p, polyM);
   return pointInPolygon(p, polyM) ? -d : d;
 }
-/* Probability the true position is inside, given the fix's own error.
-   Dead centre of a small hall with a tight fix approaches 1; sitting on
-   the boundary line gives 0.5 whichever side the pin happened to land. */
+
 function containmentProbability(pt, session){
   let signed;
   if(session.venuePolygon && session.venuePolygon.length >= 3){
@@ -388,7 +172,6 @@ function containmentProbability(pt, session){
   return { p: logistic(signed, 0, sigma), signedDistance: signed };
 }
 
-/* Fraction of the individual readings that land inside on their own. */
 function sampleAgreement(samples, session){
   if(!samples.length) return 0;
   let inside = 0;
@@ -396,7 +179,6 @@ function sampleAgreement(samples, session){
   return inside/samples.length;
 }
 
-/* Mock-location and replay heuristics. */
 function integrityFlags(samples, fix){
   const flags = [];
   // Apparent speed only counts once the jump is bigger than the two
@@ -428,27 +210,29 @@ function integrityFlags(samples, fix){
   return { flags, maxSpeed: Math.round(maxSpeed*10)/10 };
 }
 
-/* Where is the rest of the room? Students already checked in form a
-   cloud; anyone far outside it is the outlier worth a second look.
-   Needs no beacons, no extra hardware, and sharpens as uptake grows. */
-function roomConsensus(session, fix, myStudentNumber){
-  const pts = Object.entries(session.attendanceRecords||{})
-    .filter(([sn,r]) => sn !== myStudentNumber && r && r.gps && typeof r.gps.lat === 'number' && r.status !== 'rejected')
-    .map(([,r]) => r.gps);
-  if(pts.length < 3) return { available:false, score:0.6, peers:pts.length, distance:null };
-  const mLat = medianOf(pts.map(p=>p.lat)), mLng = medianOf(pts.map(p=>p.lng));
-  const distance = haversineMeters(fix.lat, fix.lng, mLat, mLng);
-  const typical = medianOf(pts.map(p=>haversineMeters(p.lat, p.lng, mLat, mLng))) || 8;
+/* Where is the rest of the room? Students already checked in form a cloud;
+   anyone far outside it is the outlier worth a second look.
+
+   The aggregate arrives from aa_peer_centroid() rather than being derived on
+   the device. Row-level security means a student can read only their own
+   register row, so computing this client-side saw zero peers and silently
+   fell back to neutral - and a student has no business seeing a classmate's
+   coordinates anyway. The server returns the centroid and spread, nothing
+   individual. */
+function roomConsensus(session, fix, myStudentNumber, agg){
+  const peers = (agg && agg.peers) || 0;
+  if(peers < 3) return { available:false, score:0.6, peers, distance:null };
+  const distance = haversineMeters(fix.lat, fix.lng, agg.lat, agg.lng);
+  const typical = Number(agg.spread) || 8;
   const tolerance = Math.max(20, typical*2 + fix.accuracy);
   return {
     available: true,
     score: logistic(distance, tolerance, Math.max(6, tolerance*0.35)),
-    peers: pts.length,
+    peers,
     distance: Math.round(distance)
   };
 }
 
-/* How the student proved they were in front of the lecturer's screen. */
 function presenceProof(session, scannedToken){
   const live = session.liveToken;
   if(scannedToken && live && scannedToken === live.value){
@@ -460,13 +244,12 @@ function presenceProof(session, scannedToken){
   return { score:0.62, label:'Session ID entered', detail:'Identified by session ID rather than a live scan' };
 }
 
-/* Weighs everything into one number and picks an outcome. */
 function scoreCheckIn(input){
   const { fix, samples, session, scannedToken, studentNumber } = input;
   const containment = containmentProbability(fix, session);
   const agreement   = sampleAgreement(samples, session);
   const precision   = logistic(fix.accuracy, 35, 11);
-  const consensus   = roomConsensus(session, fix, studentNumber);
+  const consensus   = roomConsensus(session, fix, studentNumber, input.peerAgg);
   const presence    = presenceProof(session, scannedToken);
   const integrity   = integrityFlags(samples, fix);
 

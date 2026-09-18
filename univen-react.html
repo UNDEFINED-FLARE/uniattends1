@@ -1,0 +1,2755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>UNIVEN Attendance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+/* ===================================================================
+   DESIGN TOKENS
+=================================================================== */
+:root{
+  --green:#0b1f3a;
+  --green-dark:#071328;
+  --green-mid:#12305c;
+  --green-light:#eef1f7;
+  --gold:#e0932c;
+  --gold-light:#fdf1e2;
+  --bg:#f4f7f5;
+  --surface:#ffffff;
+  --surface-2:#fbfcfb;
+  --text:#12211a;
+  --text-soft:#5c6b63;
+  --text-faint:#94a39c;
+  --border:#e5ece8;
+  --danger:#e0464b;
+  --danger-light:#fdecec;
+  --success:#1fae6b;
+  --success-light:#e7f8ef;
+  --warn:#b8860b;
+  --warn-light:#fbf2df;
+  --r-xs:8px;--r-sm:12px;--r-md:16px;--r-lg:22px;--r-xl:30px;--r-pill:999px;
+  --shadow-sm:0 3px 10px rgba(11,31,58,.06);
+  --shadow-md:0 10px 28px rgba(11,31,58,.11);
+  --shadow-lg:0 22px 54px rgba(11,31,58,.20);
+  --glass-bg:rgba(255,255,255,.62);
+  --glass-border:rgba(255,255,255,.55);
+  --nav-h:78px;
+}
+[data-theme="dark"]{
+  --bg:black;
+  --surface:black;
+  --surface-2:#0f1b15;
+  --text:#eef5f1;
+  --text-soft:#a3b5ac;
+  --text-faint:#6d8177;
+  --border:#20342a;
+  --green-light:#123322;
+  --gold-light:#2b2716;
+  --danger-light:#331515;
+  --success-light:#0f2c1e;
+  --warn-light:#2c2410;
+  --glass-bg:rgba(19,31,25,.62);
+  --glass-border:rgba(255,255,255,.08);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.25);
+  --shadow-md:0 8px 24px rgba(0,0,0,.35);
+  --shadow-lg:0 18px 48px rgba(0,0,0,.5);
+}
+
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html{font-size:15px;}
+body{
+  font-family:'Inter',sans-serif;
+  background:#dfe6e2;
+  color:var(--text);
+  min-height:100vh;
+}
+[data-theme="dark"] body{background:#050a07;}
+h1,h2,h3,h4,.poppins{font-family:'Poppins',sans-serif;}
+button,input,select,textarea{font-family:inherit;}
+a{color:inherit;text-decoration:none;}
+::-webkit-scrollbar{width:0;height:0;}
+
+/* ===================================================================
+   PHONE FRAME
+=================================================================== */
+.frame{
+  max-width:430px;
+  margin:0 auto;
+  min-height:100vh;
+  background:var(--bg);
+  position:relative;
+  overflow-x:hidden;
+  transition:background .3s ease;
+}
+@media (min-width:460px){
+  body{padding:18px 0;}
+  .frame{min-height:calc(100vh - 36px);border-radius:36px;box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden;}
+}
+
+.screen{display:none;min-height:100%;}
+.screen.active{display:block;animation:screenIn .32s cubic-bezier(.2,.8,.3,1);}
+.screen:not(.active){display:none!important;}
+@keyframes screenIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* ===================================================================
+   SPLASH
+=================================================================== */
+#splash-screen{
+  position:relative;
+  min-height:100vh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:white;
+  background-image:url("https://i.ibb.co/fYQtc6Gk/122e8e91-764c-4747-a6ae-2f7127ec53d8.png");
+  color:#fff;overflow:hidden;
+  background-size:100%;
+}
+#splash-screen::before{
+  content:'';position:absolute;inset:0;
+  
+}
+.splash-crest{
+  width:92px;height:92px;border-radius:24px;background:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 12px 32px rgba(0,0,0,.3);margin-bottom:18px;
+  animation:crestPop .7s cubic-bezier(.2,1.4,.4,1) both;
+  position:relative;z-index:1;
+}
+.splash-crest img{width:64px;height:64px;object-fit:contain;}
+@keyframes crestPop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+.splash-title{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.6rem;letter-spacing:.5px;position:relative;z-index:1;animation:fadeUp .6s .15s both;}
+.splash-title span{color:var(--gold);}
+.splash-sub{font-size:.82rem;opacity:.8;margin-top:6px;letter-spacing:1.5px;text-transform:uppercase;position:relative;z-index:1;animation:fadeUp .6s .25s both;}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.splash-loader{
+  margin-top:40px;width:120px;height:4px;border-radius:4px;background:rgba(255,255,255,.2);
+  overflow:hidden;position:relative;z-index:1;
+}
+.splash-loader::after{
+  content:'';position:absolute;left:-40%;top:0;height:100%;width:40%;border-radius:4px;
+  background:linear-gradient(90deg,var(--gold),#fff);
+  animation:loaderSlide 1.1s ease-in-out infinite;
+}
+@keyframes loaderSlide{0%{left:-40%}100%{left:100%}}
+
+/* ===================================================================
+   TOP BARS / HEADERS
+=================================================================== */
+.topbar{
+  position:sticky;top:0;z-index:50;
+  background:var(--glass-bg);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--border);
+  padding:14px 18px;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.topbar h2{font-size:1.02rem;font-weight:700;display:flex;align-items:center;gap:8px;}
+.icon-btn{
+  width:38px;height:38px;border-radius:var(--r-pill);border:1px solid var(--border);
+  background:var(--surface);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--text-soft);transition:all .18s ease;font-size:.92rem;
+  color:#FA6632 ;
+}
+.icon-btn:hover{border-color:var(--green);color:var(--green);}
+.icon-btn:active{transform:scale(.92);}
+
+.page-pad{padding:18px 18px 24px;}
+
+/* ===================================================================
+   GENERIC AUTH / ROLE SELECT
+=================================================================== */
+.auth-screen{min-height:100vh;background:var(--bg);display:flex;flex-direction:column;
+  
+}
+.auth-hero{
+  background:linear-gradient(160deg,var(--green) 0%,var(--green-dark) 100%);
+  padding:52px 24px 100px;color:#fff;position:relative;overflow:hidden;
+  background-image:url("https://i.ibb.co/QZC2JH3/file-00000000e9d471f4af794bc4c0b448a5.png"); 
+  background-size:100%;
+}
+.auth-hero::after{
+  content:'';position:absolute;right:-30px;top:-30px;width:150px;height:150px;border-radius:50%;
+  background:rgba(201,162,39,.22);
+}
+.auth-hero .crest-sm{width:46px;height:46px;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;margin-bottom:14px;box-shadow:var(--shadow-md);}
+.auth-hero .crest-sm img{width:32px;height:32px;object-fit:contain;}
+.auth-hero h1{font-size:1.5rem;font-weight:800;position:relative;z-index:1;}
+.auth-hero p{font-size:.85rem;opacity:.85;margin-top:4px;position:relative;z-index:1;}
+
+.role-cards{padding:22px 20px;display:flex;flex-direction:column;gap:14px;flex:1;}
+.role-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  padding:20px;display:flex;align-items:center;gap:16px;cursor:pointer;
+  box-shadow:var(--shadow-sm);transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+}
+.role-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-md);border-color:var(--green);}
+.role-card .r-icon{
+  width:52px;height:52px;border-radius:var(--r-md);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:1.4rem;color:#fff;
+}
+.role-card.student .r-icon{background:linear-gradient(135deg,var(--green-mid),var(--green));}
+.role-card.lecturer .r-icon{background:linear-gradient(135deg,var(--gold),#a9821c);}
+.role-card h3{font-size:1rem;font-weight:700;margin-bottom:2px;}
+.role-card p{font-size:.78rem;color:var(--text-soft);}
+.role-card .chevron{margin-left:auto;color:var(--text-faint);}
+
+.form-card{background:var(--surface);border-radius:var(--r-lg);padding:24px 20px;box-shadow:var(--shadow-sm);border:1px solid var(--border);margin:18px 20px;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:.76rem;font-weight:600;color:var(--text-soft);margin-bottom:6px;letter-spacing:.2px;}
+.field .input-wrap{position:relative;}
+.field .input-wrap i{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:.85rem;}
+.input{
+  width:100%;height:46px;border-radius:var(--r-sm);border:1.5px solid var(--border);
+  background:var(--surface-2);padding:0 14px 0 38px;font-size:.9rem;color:var(--text);
+  outline:none;transition:border-color .18s ease,background .18s ease;
+}
+.input:focus{border-color:var(--green);background:var(--surface);}
+.input.no-icon{padding-left:14px;}
+textarea.input{height:auto;padding-top:10px;}
+.select{
+  width:100%;height:46px;border-radius:var(--r-sm);border:1.5px solid var(--border);
+  background:var(--surface-2);padding:0 14px;font-size:.9rem;color:var(--text);outline:none;cursor:pointer;
+}
+.select:focus{border-color:var(--green);}
+
+.btn{
+  width:100%;height:48px;border-radius:var(--r-sm);border:none;cursor:pointer;
+  font-size:.9rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;
+  transition:transform .15s ease,box-shadow .15s ease,opacity .15s ease;font-family:'Inter',sans-serif;
+}
+.btn:active{transform:scale(.98);}
+.btn:disabled{opacity:.55;cursor:not-allowed;}
+.btn-primary{background:linear-gradient(135deg,var(--green-mid),var(--green-dark));color:#fff;box-shadow:0 10px 24px rgba(0,102,51,.28);}
+.btn-gold{background:linear-gradient(135deg,var(--gold),#a9821c);color:#fff;box-shadow:0 10px 24px rgba(201,162,39,.28);}
+.btn-ghost{background:var(--surface-2);color:var(--text);border:1.5px solid var(--border);}
+.btn-danger{background:var(--danger-light);color:var(--danger);}
+.btn-sm{height:38px;font-size:.8rem;border-radius:var(--r-xs);}
+
+.divider-text{text-align:center;color:var(--text-faint);font-size:.78rem;margin:16px 0;position:relative;}
+.divider-text::before,.divider-text::after{content:'';position:absolute;top:50%;width:38%;height:1px;background:var(--border);}
+.divider-text::before{left:0;}.divider-text::after{right:0;}
+
+.link-row{text-align:center;font-size:.8rem;color:var(--text-soft);margin-top:14px;}
+.link-row b{color:var(--green);cursor:pointer;}
+
+.tab-switch{display:flex;background:var(--surface-2);border-radius:var(--r-sm);padding:4px;margin-bottom:18px;gap:4px;}
+.tab-switch button{flex:1;border:none;background:transparent;padding:10px;border-radius:9px;font-size:.84rem;font-weight:700;color:var(--text-soft);cursor:pointer;transition:all .18s ease;}
+.tab-switch button.active{background:var(--green);color:#fff;}
+
+.confirm-chip{
+  margin-top:10px;display:flex;align-items:center;gap:8px;background:var(--success-light);color:var(--success);
+  border-radius:var(--r-sm);padding:10px 12px;font-size:.8rem;font-weight:700;
+}
+.confirm-chip.warn{background:var(--warn-light);color:var(--warn);}
+.confirm-chip{transition:background .2s ease,color .2s ease;}
+
+/* ===================================================================
+   STATUS / TOAST
+=================================================================== */
+.status-msg{
+  margin-top:14px;padding:11px 14px;border-radius:var(--r-sm);font-size:.82rem;font-weight:600;display:none;
+  align-items:center;gap:8px;
+}
+.status-msg.show{display:flex;}
+.status-msg.success{background:var(--success-light);color:var(--success);}
+.status-msg.error{background:var(--danger-light);color:var(--danger);}
+.status-msg.info{background:var(--green-light);color:var(--green);}
+
+#toast{
+  position:fixed;bottom:110px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--text);color:#fff;padding:12px 20px;border-radius:var(--r-pill);
+  font-size:.82rem;font-weight:600;z-index:999;box-shadow:var(--shadow-lg);
+  opacity:0;pointer-events:none;transition:all .3s cubic-bezier(.2,.8,.3,1);
+  display:flex;align-items:center;gap:8px;max-width:88%;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+#toast.success{background:var(--success);}
+#toast.error{background:var(--danger);}
+
+/* ===================================================================
+   BOTTOM NAV
+=================================================================== */
+.bottom-nav{
+  position:fixed;bottom:0;left:0;right:0;max-width:430px;margin:0 auto;
+  height:var(--nav-h);background:var(--glass-bg);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-top:1px solid var(--border);display:flex;z-index:80;
+  padding-bottom:14px;
+}
+.nav-item{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  color:var(--text-faint);cursor:pointer;font-size:.66rem;font-weight:600;position:relative;
+  transition:color .2s ease;
+}
+.nav-item i{font-size:1.05rem;transition:transform .2s ease;}
+.nav-item.active{color:var(--green);}
+.nav-item.active i{transform:translateY(-2px);}
+.nav-item .nav-dot{position:absolute;top:2px;right:26%;width:7px;height:7px;border-radius:50%;background:var(--danger);display:none;}
+.nav-item .nav-dot.show{display:block;}
+.nav-fab{
+  width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--green-mid),var(--green-dark));
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.2rem;
+  margin-top:-26px;box-shadow:0 10px 24px rgba(0,102,51,.4);border:4px solid var(--bg);
+}
+
+/* ===================================================================
+   STUDENT HOME
+=================================================================== */
+.greet-card{
+  margin:14px 18px 0;padding:20px;
+padding-bottom:50px;
+  border-radius:var(--r-lg);color:#fff;position:relative;overflow:hidden;
+  background:linear-gradient(150deg,var(--green) 0%,var(--green-dark) 100%);
+  background-image:url("https://i.ibb.co/QZC2JH3/file-00000000e9d471f4af794bc4c0b448a5.png");
+  background-size:100%;
+}
+.greet-card::after{content:'';position:absolute;right:-40px;bottom:-40px;width:140px;height:140px;border-radius:50%;background:rgba(201,162,39,.18);}
+.greet-card .hi{font-size:.78rem;opacity:.8;}
+.greet-card h2{font-size:1.15rem;font-weight:700;margin-top:2px;}
+.greet-ring-row{display:flex;align-items:center;gap:16px;margin-top:16px;position:relative;z-index:1;}
+.ring{width:64px;height:64px;border-radius:50%;position:relative;flex-shrink:0;}
+.ring svg{transform:rotate(-90deg);}
+.ring .ring-label{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:800;font-family:'Poppins',sans-serif;}
+.greet-stats{display:flex;gap:18px;font-size:.74rem;opacity:.9;}
+.greet-stats b{display:block;font-family:'Poppins',sans-serif;font-size:1rem;}
+
+.pwd-nudge{
+  margin:14px 18px 0;background:var(--warn-light);color:var(--warn);border-radius:var(--r-md);
+  padding:12px 14px;font-size:.8rem;font-weight:700;display:flex;align-items:center;gap:10px;cursor:pointer;
+}
+
+.section-title{display:flex;align-items:center;justify-content:space-between;margin:20px 18px 10px;}
+.section-title h3{font-size:.95rem;font-weight:700;}
+.section-title .see-all{font-size:.76rem;color:var(--green);font-weight:600;cursor:pointer;}
+
+.hscroll{display:flex;gap:12px;overflow-x:auto;padding:0 18px 4px;scroll-snap-type:x mandatory;}
+.class-card{
+  scroll-snap-align:start;min-width:220px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-md);padding:14px;box-shadow:var(--shadow-sm);
+}
+.class-card .tag{display:inline-block;font-size:.66rem;font-weight:700;padding:3px 9px;border-radius:var(--r-pill);background:var(--green-light);color:var(--green);margin-bottom:8px;}
+.class-card .tag.now{background:var(--warn-light);color:var(--warn);}
+.class-card h4{font-size:.88rem;font-weight:700;margin-bottom:2px;}
+.class-card .meta{font-size:.72rem;color:var(--text-soft);display:flex;align-items:center;gap:5px;margin-top:3px;}
+
+.announce-card{
+  margin:0 18px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px;display:flex;gap:12px;box-shadow:var(--shadow-sm);
+}
+.announce-card .a-icon{width:38px;height:38px;border-radius:var(--r-xs);background:var(--gold-light);color:var(--gold);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.announce-card h4{font-size:.85rem;font-weight:700;margin-bottom:2px;}
+.announce-card p{font-size:.76rem;color:var(--text-soft);line-height:1.4;}
+.announce-card .time{font-size:.68rem;color:var(--text-faint);margin-top:4px;display:block;}
+
+.quick-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 18px;}
+.qa-btn{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px 6px;text-align:center;cursor:pointer;transition:transform .15s ease;box-shadow:var(--shadow-sm);
+}
+.qa-btn:active{transform:scale(.94);}
+.qa-btn i{font-size:1.15rem;color:var(--green);margin-bottom:6px;}
+.qa-btn span{display:block;font-size:.66rem;font-weight:600;color:var(--text-soft);}
+
+/* ===================================================================
+   SCAN SCREEN
+=================================================================== */
+.scan-wrap{background:#080d16;min-height:100vh;color:#fff;position:relative;}
+.scan-wrap .topbar{background:rgba(11,20,16,.7);border-color:rgba(255,255,255,.08);}
+.scan-wrap .topbar h2{color:#fff;}
+.scan-wrap .icon-btn{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15);color:#fff;}
+#reader{width:100%;}
+.camera-stage{
+  position:relative;width:100%;aspect-ratio:3/4;background:#000;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+}
+.scan-frame{
+  position:absolute;width:70%;aspect-ratio:1/1;
+}
+.scan-frame .corner{position:absolute;width:32px;height:32px;border:3px solid var(--gold);}
+.scan-frame .c1{top:0;left:0;border-right:none;border-bottom:none;border-radius:10px 0 0 0;}
+.scan-frame .c2{top:0;right:0;border-left:none;border-bottom:none;border-radius:0 10px 0 0;}
+.scan-frame .c3{bottom:0;left:0;border-right:none;border-top:none;border-radius:0 0 0 10px;}
+.scan-frame .c4{bottom:0;right:0;border-left:none;border-top:none;border-radius:0 0 10px 0;}
+.scan-line{
+  position:absolute;left:4%;right:4%;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+  animation:scanMove 2.1s ease-in-out infinite;box-shadow:0 0 12px 1px rgba(201,162,39,.7);
+}
+@keyframes scanMove{0%{top:4%}50%{top:96%}100%{top:4%}}
+.scan-hint{text-align:center;padding:20px;font-size:.85rem;color:rgba(255,255,255,.75);}
+.scan-step-pill{
+  display:inline-flex;margin:14px auto 0;padding:5px 14px;border-radius:var(--r-pill);
+  background:rgba(224,147,44,.18);color:var(--gold);font-size:.7rem;font-weight:700;
+}
+.scan-step-row{text-align:center;}
+.scan-manual{margin:0 20px;}
+.scan-result-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:400;display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(3px);
+}
+.scan-result-overlay.hidden{display:none;}
+.result-card{
+  background:var(--surface);border-radius:var(--r-xl);padding:32px 26px;text-align:center;width:86%;max-width:340px;
+  box-shadow:var(--shadow-lg);animation:resultPop .35s cubic-bezier(.2,1.3,.4,1);
+}
+@keyframes resultPop{from{transform:scale(.75);opacity:0}to{transform:scale(1);opacity:1}}
+.result-icon{width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;margin:0 auto 16px;}
+.result-icon.ok{background:var(--success-light);color:var(--success);}
+.result-icon.warn{background:var(--warn-light);color:var(--warn);}
+.result-icon.fail{background:var(--danger-light);color:var(--danger);}
+.result-card h3{font-size:1.1rem;font-weight:800;margin-bottom:6px;}
+.result-card p{font-size:.85rem;color:var(--text-soft);line-height:1.5;margin-bottom:20px;}
+
+/* ===================================================================
+   HISTORY
+=================================================================== */
+.filter-chips{display:flex;gap:8px;padding:14px 18px 4px;overflow-x:auto;}
+.chip{
+  padding:7px 14px;border-radius:var(--r-pill);font-size:.76rem;font-weight:600;white-space:nowrap;
+  background:var(--surface);border:1.5px solid var(--border);color:var(--text-soft);cursor:pointer;transition:all .18s ease;
+}
+.chip.active{background:var(--green);color:#fff;border-color:var(--green);}
+
+.history-item{
+  margin:0 18px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px;display:flex;gap:12px;box-shadow:var(--shadow-sm);
+}
+.history-item .h-date{
+  width:46px;flex-shrink:0;text-align:center;background:var(--green-light);border-radius:var(--r-xs);padding:6px 2px;
+}
+.history-item .h-date .d{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.05rem;color:var(--green);line-height:1;}
+.history-item .h-date .m{font-size:.62rem;color:var(--green);text-transform:uppercase;letter-spacing:.4px;}
+.history-item h4{font-size:.88rem;font-weight:700;}
+.history-item .meta{font-size:.73rem;color:var(--text-soft);margin-top:2px;line-height:1.5;}
+.badge{display:inline-flex;align-items:center;gap:4px;font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:var(--r-pill);margin-top:6px;}
+.badge.present{background:var(--success-light);color:var(--success);}
+.badge.absent{background:var(--danger-light);color:var(--danger);}
+.badge.late{background:var(--warn-light);color:var(--warn);}
+
+/* ===================================================================
+   NOTIFICATIONS
+=================================================================== */
+.notif-item{
+  margin:0 18px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px;display:flex;gap:12px;box-shadow:var(--shadow-sm);position:relative;
+}
+.notif-item.unread::before{content:'';position:absolute;left:6px;top:20px;width:7px;height:7px;border-radius:50%;background:var(--gold);}
+.notif-item .n-icon{width:38px;height:38px;border-radius:50%;background:var(--green-light);color:var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+/* ===================================================================
+   PROFILE
+=================================================================== */
+.profile-hero{
+ 
+  background-image:url("https://i.ibb.co/QZC2JH3/file-00000000e9d471f4af794bc4c0b448a5.png"); 
+  background-size:100%;
+  padding-bottom:50px;
+  text-align:center;border-radius:0 0 30px 30px;position:relative;
+}
+.avatar{
+  width:82px;height:82px;border-radius:50%;background:var(--gold);color:#fff;font-family:'Poppins',sans-serif;
+  font-weight:800;font-size:1.7rem;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;
+  border:4px solid rgba(255,255,255,.3);
+}
+.profile-hero h2{font-size:1.1rem;font-weight:700;color:#4169E1 ;}
+.profile-hero p{font-size:.78rem;opacity:.8;margin-top:2px;color:#4169E1;}
+.profile-stats{
+  display:flex;gap:10px;margin:-38px 18px 0;position:relative;z-index:2;
+}
+.pstat{flex:1;background:var(--surface);border-radius:var(--r-md);padding:14px 6px;text-align:center;box-shadow:var(--shadow-md);}
+.pstat b{display:block;font-family:'Poppins',sans-serif;font-size:1.15rem;color:var(--green);}
+.pstat span{font-size:.65rem;color:var(--text-soft);}
+
+.settings-list{margin:20px 18px;background:var(--surface);border-radius:var(--r-md);border:1px solid var(--border);overflow:hidden;}
+.settings-row{
+  display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;
+}
+.settings-row:last-child{border-bottom:none;}
+.settings-row i{width:20px;color:var(--text-soft);}
+.settings-row span{flex:1;font-size:.86rem;font-weight:500;}
+.settings-row .chev{color:var(--text-faint);}
+.toggle{width:42px;height:24px;border-radius:var(--r-pill);background:var(--border);position:relative;cursor:pointer;transition:background .2s ease;flex-shrink:0;}
+.toggle.on{background:var(--green);}
+.toggle .knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s ease;box-shadow:0 1px 4px rgba(0,0,0,.3);}
+.toggle.on .knob{transform:translateX(18px);}
+
+/* ===================================================================
+   LECTURER DASHBOARD
+=================================================================== */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 18px;}
+.stat-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;transition:transform .18s ease,box-shadow .18s ease;}
+.stat-box:active{transform:scale(.97);}
+.stat-box .s-icon{width:34px;height:34px;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;margin-bottom:10px;font-size:.9rem;}
+.stat-box b{display:block;font-family:'Poppins',sans-serif;font-size:1.35rem;}
+.stat-box span{font-size:.72rem;color:var(--text-soft);}
+
+.chart-card{margin:14px 18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px;box-shadow:var(--shadow-sm);}
+.chart-card h4{font-size:.88rem;font-weight:700;margin-bottom:12px;}
+.chart-card canvas{max-height:170px;}
+
+.session-row{
+  margin:0 18px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:14px;box-shadow:var(--shadow-sm);cursor:pointer;transition:border-color .15s ease;
+}
+.session-row:hover{border-color:var(--green);}
+.session-row .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+.session-row h4{font-size:.88rem;font-weight:700;}
+.session-row .meta{font-size:.73rem;color:var(--text-soft);}
+.session-status{font-size:.65rem;font-weight:700;padding:3px 9px;border-radius:var(--r-pill);}
+.session-status.live{background:var(--success-light);color:var(--success);}
+.session-status.ended{background:var(--border);color:var(--text-soft);}
+
+/* ===================================================================
+   CREATE SESSION
+=================================================================== */
+.expire-select{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.expire-opt{
+  text-align:center;padding:10px 4px;border-radius:var(--r-sm);border:1.5px solid var(--border);
+  font-size:.78rem;font-weight:700;cursor:pointer;color:var(--text-soft);background:var(--surface-2);
+}
+.expire-opt.active{background:var(--green);color:#fff;border-color:var(--green);}
+
+.qr-panel{
+  margin:18px 20px;background:var(--surface);border-radius:var(--r-lg);border:1px solid var(--border);
+  padding:24px;text-align:center;box-shadow:var(--shadow-md);
+}
+#qrcode-box{display:inline-block;padding:14px;background:#fff;border-radius:var(--r-md);box-shadow:var(--shadow-sm);}
+.qr-timer{
+  margin-top:16px;font-family:'Poppins',sans-serif;font-size:1.6rem;font-weight:800;color:var(--green);
+}
+.qr-timer.expiring{color:var(--danger);animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.qr-meta{font-size:.78rem;color:var(--text-soft);margin-top:6px;}
+
+/* ===================================================================
+   ACTIVE CLASSES (student)
+=================================================================== */
+.empty{text-align:center;padding:50px 24px;}
+.empty i{font-size:2.6rem;color:var(--text-faint);margin-bottom:12px;}
+.empty h4{font-size:.95rem;font-weight:700;margin-bottom:4px;}
+.empty p{font-size:.8rem;color:var(--text-soft);}
+
+/* ===================================================================
+   STUDENT LIST (lecturer)
+=================================================================== */
+.search-bar{margin:14px 18px;display:flex;gap:8px;}
+.search-bar .input-wrap{flex:1;position:relative;}
+.stud-row{
+  margin:0 18px 10px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  padding:12px 14px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-sm);
+}
+.stud-avatar{width:38px;height:38px;border-radius:50%;background:var(--green-light);color:var(--green);font-weight:700;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:'Poppins',sans-serif;}
+.stud-row h4{font-size:.85rem;font-weight:700;}
+.stud-row .meta{font-size:.72rem;color:var(--text-soft);}
+
+/* ===================================================================
+   DIGITAL STUDENT ID CARD
+=================================================================== */
+.idc-stage{
+  display:flex;flex-direction:column;align-items:center;padding:28px 18px 4px;
+  position:relative;overflow:hidden;
+}
+.idc-stage::before, .idc-stage::after{
+  content:'';position:absolute;border-radius:50%;z-index:0;pointer-events:none;
+}
+.idc-stage::before{width:180px;height:180px;background:radial-gradient(circle,rgba(11,31,58,.10),transparent 70%);top:-60px;left:-50px;}
+.idc-stage::after{width:220px;height:220px;background:radial-gradient(circle,rgba(224,147,44,.14),transparent 70%);bottom:-70px;right:-60px;}
+
+.idc-card{
+  width:100%;max-width:370px;background:#fbfaf7;border-radius:20px;overflow:hidden;
+  box-shadow:0 22px 46px rgba(11,31,58,.22), 0 2px 6px rgba(11,31,58,.08);
+  position:relative;z-index:1;border:1px solid rgba(11,31,58,.06);
+}
+.idc-card::before{
+  content:'';position:absolute;inset:0;
+  background-image:radial-gradient(circle at 22% 28%, rgba(13,44,84,.035) 1px, transparent 1px),
+    radial-gradient(circle at 62% 72%, rgba(13,44,84,.035) 1px, transparent 1px);
+  background-size:34px 34px;pointer-events:none;
+}
+.idc-band{
+  background:linear-gradient(120deg,#0b1f3a 0%,#12305c 55%,#0b1f3a 100%);color:#fff;
+  display:flex;align-items:center;justify-content:space-between;padding:14px 18px;
+  position:relative;z-index:1;overflow:hidden;
+}
+.idc-band::after{
+  content:'';position:absolute;top:-40%;right:-10%;width:120px;height:220%;
+  background:rgba(224,147,44,.18);transform:rotate(18deg);pointer-events:none;
+}
+.idc-label{font-weight:800;letter-spacing:2.5px;font-size:11px;text-transform:uppercase;opacity:.85;}
+.idc-univ-line{font-family:'Poppins',sans-serif;font-weight:800;font-size:15px;margin-top:2px;}
+.idc-year{
+  font-family:'Poppins',sans-serif;font-weight:800;font-size:15px;background:rgba(224,147,44,.22);
+  color:#f3cd84;padding:4px 12px;border-radius:var(--r-pill);border:1px solid rgba(224,147,44,.4);
+}
+.idc-body{display:grid;grid-template-columns:82px 1fr;gap:16px;padding:20px 18px 8px;position:relative;z-index:1;align-items:start;}
+.idc-photo-col{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.idc-photo-box{
+  width:82px;height:104px;border-radius:10px;background:#dfe3e8;display:flex;align-items:center;
+  justify-content:center;overflow:hidden;position:relative;cursor:pointer;flex-shrink:0;
+  border:3px solid #fff;box-shadow:0 0 0 2px var(--gold),0 6px 14px rgba(11,31,58,.18);
+}
+.idc-photo-box img{width:100%;height:100%;object-fit:cover;}
+.idc-placeholder{font-size:9.5px;color:#6b7684;text-align:center;padding:6px;line-height:1.3;}
+.idc-hint{
+  position:absolute;bottom:0;left:0;right:0;background:rgba(13,44,84,.78);color:#fff;font-size:8.5px;
+  text-align:center;padding:3px 0;opacity:0;transition:opacity .15s;
+}
+.idc-photo-box:hover .idc-hint{opacity:1;}
+.idc-crest-mini{width:34px;height:34px;border-radius:8px;background:#fff;box-shadow:var(--shadow-sm);display:flex;align-items:center;justify-content:center;padding:3px;}
+.idc-crest-mini img{width:100%;height:100%;object-fit:contain;}
+
+.idc-info{display:flex;flex-direction:column;min-width:0;}
+.idc-role{font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--gold);text-transform:uppercase;margin-bottom:4px;}
+.idc-name-line{font-family:'Poppins',sans-serif;font-weight:800;font-size:16px;color:#0b1f3a;text-transform:uppercase;line-height:1.2;letter-spacing:.2px;word-break:break-word;}
+.idc-num-row{display:flex;align-items:center;gap:8px;margin-top:10px;}
+.idc-num{
+  font-family:'Poppins',sans-serif;font-weight:700;font-size:13px;color:#0b1f3a;letter-spacing:.5px;
+  background:var(--green-light);padding:4px 10px;border-radius:var(--r-xs);
+}
+.idc-reg{font-size:10.5px;color:var(--text-soft);margin-top:8px;}
+.idc-reg b{color:#0b1f3a;font-weight:700;}
+
+.idc-uni-footer{display:flex;align-items:center;justify-content:center;gap:8px;padding:2px 18px 10px;position:relative;z-index:1;}
+.idc-uni-name{font-size:11px;font-weight:700;color:#0b1f3a;text-align:center;line-height:1.1;}
+.idc-tagline{font-size:9px;font-style:italic;color:var(--danger);text-align:center;}
+
+.idc-stripe{height:5px;background:repeating-linear-gradient(45deg,var(--gold) 0 9px,#0b1f3a 9px 11px,var(--danger) 11px 13px);margin:0 18px;border-radius:3px;}
+/* ---- acoustic layer ---- */
+.ac-panel{
+  margin-top:16px;padding:14px;border-radius:var(--r-sm);
+  background:var(--surface-2);border:1.5px solid var(--border);text-align:left;
+}
+.ac-head{font-size:.82rem;font-weight:800;display:flex;align-items:center;gap:8px;}
+.ac-count{margin-left:auto;font-weight:600;color:var(--text-faint);font-size:.72rem;}
+.ac-status{font-size:.76rem;color:var(--text-soft);line-height:1.5;margin-top:8px;}
+.ac-dial{
+  margin:12px auto 0;width:78px;height:78px;border-radius:50%;
+  display:grid;place-items:center;font-size:30px;font-weight:800;
+  font-variant-numeric:tabular-nums;color:var(--gold);
+  border:3px solid var(--gold);animation:acpulse 1.15s ease-out infinite;
+}
+@keyframes acpulse{0%{transform:scale(.88);opacity:.6}70%{transform:scale(1.06);opacity:1}100%{transform:scale(.88);opacity:.6}}
+
+#ac-student-bar{
+  position:fixed;left:12px;right:12px;bottom:12px;z-index:900;
+  background:var(--surface);border:1.5px solid var(--gold);
+  border-radius:var(--r-sm);padding:12px 14px;
+  box-shadow:0 10px 30px rgba(0,0,0,.18);
+  display:flex;align-items:center;gap:12px;
+}
+#ac-student-bar .txt{flex:1;font-size:.76rem;line-height:1.45;}
+#ac-student-bar .num{
+  font-size:22px;font-weight:800;color:var(--gold);
+  font-variant-numeric:tabular-nums;min-width:30px;text-align:center;
+}
+#ac-student-bar button{
+  background:none;border:0;color:var(--text-faint);font-size:.72rem;
+  text-decoration:underline;cursor:pointer;padding:0;
+}
+.idc-footer-area{
+  padding:12px 20px 14px;text-align:center;position:relative;z-index:1;
+  background:#fff;margin:12px 14px 14px;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(11,31,58,.06);
+}
+.idc-site{font-size:10px;color:var(--text-faint);letter-spacing:.5px;}
+.idc-controls{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:20px;position:relative;z-index:1;}
+
+/* ===================================================================
+   VENUE BOUNDARY DRAWING (Leaflet map)
+=================================================================== */
+.venue-map-wrap{margin:14px 18px;border-radius:var(--r-md);overflow:hidden;box-shadow:var(--shadow-sm);border:1px solid var(--border);}
+#draw-venue-map{width:100%;height:320px;background:var(--surface-2);}
+#walk-draw-map{width:100%;height:320px;background:var(--surface-2);}
+.dv-badge.warn{background:var(--warn-light);color:var(--warn);}
+.dv-badge.danger{background:var(--danger-light);color:var(--danger);}
+.dv-controls{display:flex;gap:8px;margin:14px 18px 0;flex-wrap:wrap;}
+.dv-controls .btn{width:auto;padding:0 14px;flex:1;min-width:90px;}
+.dv-badge{
+  display:inline-flex;align-items:center;gap:6px;margin:0 18px;padding:6px 12px;border-radius:var(--r-pill);
+  background:var(--green-light);color:var(--green);font-size:.76rem;font-weight:700;
+}
+
+/* ===================================================================
+   SKELETON
+=================================================================== */
+.skel{background:linear-gradient(90deg,var(--border) 25%,var(--surface-2) 50%,var(--border) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:8px;}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+.hidden{display:none!important;}
+.spin{animation:spinRot 1s linear infinite;}
+@keyframes spinRot{to{transform:rotate(360deg)}}
+
+/* ===================================================================
+   ATTENDANCE VERIFICATION
+   A check-in is scored, not switched. These styles cover the live
+   verification dial, the confidence meter on the result card, and the
+   lecturer's review queue for borderline check-ins.
+=================================================================== */
+.verify-card{text-align:center;}
+.vf-dial{width:148px;height:148px;margin:2px auto 6px;position:relative;}
+.vf-dial svg{width:100%;height:100%;transform:rotate(-90deg);display:block;}
+.vf-ring-bg{fill:none;stroke:var(--border);stroke-width:7;}
+.vf-ring-fg{fill:none;stroke:var(--gold);stroke-width:7;stroke-linecap:round;
+  stroke-dasharray:408;stroke-dashoffset:408;transition:stroke-dashoffset .55s cubic-bezier(.2,.8,.3,1);}
+.vf-sweep{position:absolute;inset:16px;border-radius:50%;pointer-events:none;
+  background:conic-gradient(from 0deg,rgba(224,147,44,0) 0deg,rgba(224,147,44,.26) 54deg,rgba(224,147,44,0) 56deg);
+  animation:vfSweep 2.4s linear infinite;}
+@keyframes vfSweep{to{transform:rotate(360deg)}}
+.vf-core{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.vf-core .n{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.6rem;line-height:1;color:var(--text);}
+.vf-core .u{font-size:.6rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-faint);margin-top:5px;font-weight:700;}
+.vf-checks{text-align:left;margin:16px 0 6px;display:flex;flex-direction:column;gap:3px;}
+.vf-check{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-xs);
+  font-size:.75rem;color:var(--text-faint);background:transparent;transition:background .25s ease,color .25s ease;}
+.vf-check i{width:15px;text-align:center;font-size:.72rem;}
+.vf-check .val{margin-left:auto;font-weight:700;font-size:.69rem;letter-spacing:.2px;}
+.vf-check.run{color:var(--text-soft);background:var(--surface-2);}
+.vf-check.run i{animation:vfPulse 1.1s ease-in-out infinite;}
+@keyframes vfPulse{0%,100%{opacity:.35}50%{opacity:1}}
+.vf-check.ok{color:var(--text);background:var(--success-light);}
+.vf-check.ok i{color:var(--success);}
+.vf-check.warn{color:var(--text);background:var(--warn-light);}
+.vf-check.warn i{color:var(--warn);}
+.vf-check.bad{color:var(--text);background:var(--danger-light);}
+.vf-check.bad i{color:var(--danger);}
+
+.conf-wrap{margin:4px 0 14px;text-align:left;}
+.conf-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+.conf-head .lbl{font-size:.63rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-faint);font-weight:800;}
+.conf-head .pct{font-family:'Poppins',sans-serif;font-weight:800;font-size:1.05rem;}
+.conf-track{height:8px;border-radius:var(--r-pill);background:var(--border);overflow:hidden;}
+.conf-fill{height:100%;border-radius:var(--r-pill);width:0;transition:width .9s cubic-bezier(.2,.8,.3,1);}
+.conf-fill.ok{background:linear-gradient(90deg,#199a5d,#42d491);}
+.conf-fill.warn{background:linear-gradient(90deg,#a8790a,var(--gold));}
+.conf-fill.bad{background:linear-gradient(90deg,#b8353a,var(--danger));}
+.conf-scale{display:flex;justify-content:space-between;margin-top:7px;font-size:.6rem;color:var(--text-faint);letter-spacing:.3px;}
+
+.factor-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:0 0 16px;text-align:left;}
+.factor{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-xs);padding:9px 10px;}
+.factor .k{font-size:.6rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-faint);font-weight:800;}
+.factor .v{font-size:.79rem;font-weight:700;margin-top:3px;color:var(--text);}
+.factor.ok .v{color:var(--success);}
+.factor.warn .v{color:var(--warn);}
+.factor.bad .v{color:var(--danger);}
+
+.flag-note{display:flex;gap:9px;align-items:flex-start;text-align:left;background:var(--danger-light);
+  border-radius:var(--r-xs);padding:10px 12px;margin-bottom:14px;font-size:.74rem;line-height:1.45;color:var(--text);}
+.flag-note i{color:var(--danger);margin-top:2px;}
+
+.badge.review{background:var(--warn-light);color:var(--warn);}
+.badge.rejected{background:var(--danger-light);color:var(--danger);}
+.rv-banner{margin:16px 18px 8px;background:var(--warn-light);border:1.5px solid rgba(184,134,11,.28);
+  border-radius:var(--r-sm);padding:12px 14px;display:flex;gap:11px;align-items:flex-start;}
+.rv-banner i{color:var(--warn);margin-top:2px;}
+.rv-banner h4{font-size:.82rem;font-weight:800;margin-bottom:3px;}
+.rv-banner p{font-size:.72rem;color:var(--text-soft);line-height:1.5;}
+.rv-why{margin-top:8px;background:var(--surface-2);border-radius:var(--r-xs);padding:8px 10px;
+  font-size:.71rem;color:var(--text-soft);line-height:1.5;width:100%;}
+.rv-why b{color:var(--text);font-weight:700;}
+.rv-actions{display:flex;gap:8px;margin-top:10px;width:100%;}
+.rv-actions .btn{margin-top:0;}
+.conf-pill{display:inline-flex;align-items:center;gap:5px;font-size:.65rem;font-weight:800;
+  padding:2px 8px;border-radius:var(--r-pill);letter-spacing:.3px;}
+.conf-pill.ok{background:var(--success-light);color:var(--success);}
+.conf-pill.warn{background:var(--warn-light);color:var(--warn);}
+.conf-pill.bad{background:var(--danger-light);color:var(--danger);}
+
+.qr-token-row{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:10px;
+  font-size:.68rem;color:var(--text-faint);font-weight:700;letter-spacing:.4px;}
+.qr-token-row .dot{width:6px;height:6px;border-radius:50%;background:var(--success);animation:vfPulse 1.6s ease-in-out infinite;}
+
+.info-panel{margin:0 18px 14px;background:var(--surface);border:1.5px solid var(--border);
+  border-radius:var(--r-md);padding:14px 15px;box-shadow:var(--shadow-sm);}
+.info-panel h4{font-size:.8rem;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:7px;}
+.info-panel h4 i{color:var(--gold);}
+.info-panel ul{list-style:none;display:flex;flex-direction:column;gap:7px;}
+.info-panel li{font-size:.72rem;color:var(--text-soft);line-height:1.5;display:flex;gap:8px;align-items:flex-start;}
+.info-panel li i{color:var(--green-mid);font-size:.68rem;margin-top:3px;width:13px;text-align:center;}
+[data-theme="dark"] .info-panel li i{color:var(--gold);}
+@media (prefers-reduced-motion:reduce){
+  .vf-sweep,.vf-check.run i,.qr-token-row .dot{animation:none;}
+  .conf-fill,.vf-ring-fg{transition:none;}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React 18 is the last line with UMD builds, so it is pinned. htm gives
+     template syntax without a JSX compile step. -->
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<script>
+/* =====================================================================
+   LOCATION ENGINE — GPS polygon containment and the check-in score.
+   Pure functions, shared unchanged with univen.html.
+   ===================================================================== */
+const DEFAULT_RADIUS_METERS = 50;
+
+const GPS_GOOD_ENOUGH_ACCURACY = 20;     // metres — stop early once we get a fix this good;
+
+const VERIFY_CFG = {
+  windowMs: 9000,        // how long to keep sampling
+  sampleEveryMs: 1200,
+  targetSamples: 8,      // stop early once we have this many
+  autoPass: 0.72,        // score at or above this marks present outright
+  reviewFloor: 0.42,     // below this the check-in is refused
+  tokenTtlMs: 90000,     // how long a scanned rotating code stays valid
+  tokenRotateMs: 30000,  // how often the lecturer's QR regenerates
+  maxSpeedMps: 12        // ~43 km/h between two readings = not a walking student
+};
+
+function haversineMeters(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2-lat1), dLng = toRad(lng2-lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Flattens lat/lng to local metres around an origin point — accurate
+// enough for building-sized areas, and lets us do plain 2D geometry
+// (point-in-polygon, distance-to-edge) instead of spherical math.
+function projectToMeters(lat, lng, originLat, originLng){
+  const x = (lng - originLng) * Math.cos(originLat * Math.PI/180) * 111320;
+  const y = (lat - originLat) * 110540;
+  return { x, y };
+}
+
+function pointInPolygon(pt, poly){
+  let inside = false;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const xi=poly[i].x, yi=poly[i].y, xj=poly[j].x, yj=poly[j].y;
+    const intersect = ((yi>pt.y) !== (yj>pt.y)) && (pt.x < (xj-xi)*(pt.y-yi)/(yj-yi)+xi);
+    if(intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function distToSegmentMeters(p, a, b){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const lenSq = dx*dx+dy*dy;
+  let t = lenSq===0 ? 0 : ((p.x-a.x)*dx + (p.y-a.y)*dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = a.x + t*dx, projY = a.y + t*dy;
+  return Math.hypot(p.x-projX, p.y-projY);
+}
+
+function distToPolygonEdgeMeters(pt, poly){
+  let min = Infinity;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const d = distToSegmentMeters(pt, poly[j], poly[i]);
+    if(d<min) min = d;
+  }
+  return min;
+}
+
+function polygonCentroid(points){
+  let x=0, y=0;
+  points.forEach(p=>{ x+=p.lat; y+=p.lng; });
+  return { lat: x/points.length, lng: y/points.length };
+}
+
+function medianOf(arr){
+  if(!arr.length) return 0;
+  const a = [...arr].sort((x,y)=>x-y), m = a.length>>1;
+  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+}
+
+function logistic(x, midpoint, steepness){
+  return 1/(1+Math.exp((x-midpoint)/Math.max(0.001, steepness)));
+}
+
+function getDeviceId(){
+  let id = null;
+  try{ id = localStorage.getItem('uvn_device_id'); }catch(e){}
+  if(!id){
+    id = 'd_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+    try{ localStorage.setItem('uvn_device_id', id); }catch(e){}
+  }
+  return id;
+}
+
+function collectGpsSamples(onSample){
+  return new Promise((resolve, reject)=>{
+    if(!navigator.geolocation){ reject(new Error('This device cannot report its location')); return; }
+    const samples = [];
+    const startedAt = Date.now();
+    let done = false, lastErr = null;
+    const finish = ()=>{
+      if(done) return;
+      done = true;
+      clearInterval(interval); clearTimeout(timer);
+      if(samples.length) resolve(samples);
+      else reject(lastErr || new Error('No location readings came through'));
+    };
+    const take = ()=>{
+      navigator.geolocation.getCurrentPosition(
+        pos=>{
+          if(done) return;
+          samples.push({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy || 999,
+            altitude: pos.coords.altitude,
+            t: Date.now()
+          });
+          if(onSample) onSample(samples, Date.now()-startedAt);
+          if(samples.length >= VERIFY_CFG.targetSamples) finish();
+        },
+        err=>{ lastErr = new Error(err.message); if(samples.length===0 && err.code===1) finish(); },
+        { enableHighAccuracy:true, maximumAge:0, timeout:5000 }
+      );
+    };
+    take();
+    const interval = setInterval(take, VERIFY_CFG.sampleEveryMs);
+    const timer = setTimeout(finish, VERIFY_CFG.windowMs);
+  });
+}
+
+function robustFix(samples){
+  const lats = samples.map(s=>s.lat), lngs = samples.map(s=>s.lng);
+  const mLat = medianOf(lats), mLng = medianOf(lngs);
+  const dists = samples.map(s=>haversineMeters(s.lat, s.lng, mLat, mLng));
+  const medDist = medianOf(dists);
+  const mad = medianOf(dists.map(d=>Math.abs(d-medDist)));
+  const cutoff = Math.max(15, medDist + 3*mad);
+  let kept = samples.filter((s,i)=>dists[i] <= cutoff);
+  if(!kept.length) kept = samples;
+
+  let wsum=0, lat=0, lng=0;
+  kept.forEach(s=>{
+    const w = 1/Math.max(9, s.accuracy*s.accuracy);
+    wsum += w; lat += s.lat*w; lng += s.lng*w;
+  });
+  lat /= wsum; lng /= wsum;
+
+  const spread = kept.length>1 ? medianOf(kept.map(s=>haversineMeters(s.lat,s.lng,lat,lng))) : 0;
+  const bestAcc = Math.min(...kept.map(s=>s.accuracy));
+  const meanAcc = kept.reduce((a,s)=>a+s.accuracy,0)/kept.length;
+  const accuracy = Math.max(3, Math.min(meanAcc, Math.max(spread, bestAcc/Math.sqrt(kept.length))));
+
+  return { lat, lng, accuracy: Math.round(accuracy*10)/10, bestAccuracy: Math.round(bestAcc),
+           spread: Math.round(spread*10)/10, used: kept.length, dropped: samples.length-kept.length,
+           total: samples.length, timestamp: Date.now() };
+}
+
+function signedDistanceToPolygon(pt, polygonLatLng){
+  const origin = polygonLatLng[0];
+  const polyM = polygonLatLng.map(v=>projectToMeters(v.lat, v.lng, origin.lat, origin.lng));
+  const p = projectToMeters(pt.lat, pt.lng, origin.lat, origin.lng);
+  const d = distToPolygonEdgeMeters(p, polyM);
+  return pointInPolygon(p, polyM) ? -d : d;
+}
+
+function containmentProbability(pt, session){
+  let signed;
+  if(session.venuePolygon && session.venuePolygon.length >= 3){
+    signed = signedDistanceToPolygon(pt, session.venuePolygon);
+  }else{
+    const radius = session.radiusMeters || DEFAULT_RADIUS_METERS;
+    signed = haversineMeters(pt.lat, pt.lng, session.lat, session.lng) - radius;
+  }
+  const sigma = Math.max(4, (pt.accuracy||20)*0.6);
+  return { p: logistic(signed, 0, sigma), signedDistance: signed };
+}
+
+function sampleAgreement(samples, session){
+  if(!samples.length) return 0;
+  let inside = 0;
+  samples.forEach(s=>{ if(containmentProbability(s, session).p >= 0.5) inside++; });
+  return inside/samples.length;
+}
+
+function integrityFlags(samples, fix){
+  const flags = [];
+  // Apparent speed only counts once the jump is bigger than the two
+  // readings' own error bars. Otherwise ordinary jitter on a weak
+  // signal would look like teleporting every single time.
+  let maxSpeed = 0;
+  for(let i=1;i<samples.length;i++){
+    const dt = (samples[i].t - samples[i-1].t)/1000;
+    if(dt < 0.3) continue;
+    const jump = haversineMeters(samples[i].lat, samples[i].lng, samples[i-1].lat, samples[i-1].lng);
+    const explained = samples[i].accuracy + samples[i-1].accuracy;
+    const v = Math.max(0, jump - explained)/dt;
+    if(v > maxSpeed) maxSpeed = v;
+  }
+  if(maxSpeed > VERIFY_CFG.maxSpeedMps){
+    flags.push({ code:'teleport', weight:0.5, label:`Position jumped ${Math.round(maxSpeed)} m/s further than the signal error explains` });
+  }
+  const uniquePts = new Set(samples.map(s=>s.lat.toFixed(6)+','+s.lng.toFixed(6)));
+  if(samples.length >= 4 && uniquePts.size === 1){
+    flags.push({ code:'frozen', weight:0.6, label:'Every reading was byte-identical — real GPS always wobbles, mock-location apps do not' });
+  }
+  const uniqueAcc = new Set(samples.map(s=>s.accuracy));
+  if(samples.length >= 4 && uniqueAcc.size === 1 && samples[0].accuracy <= 5){
+    flags.push({ code:'synthetic', weight:0.2, label:'Accuracy stayed pinned at one impossibly clean value' });
+  }
+  if(fix.spread > 60){
+    flags.push({ code:'unstable', weight:0.15, label:'Readings scattered widely — signal here is poor' });
+  }
+  return { flags, maxSpeed: Math.round(maxSpeed*10)/10 };
+}
+
+/* Where is the rest of the room? Students already checked in form a cloud;
+   anyone far outside it is the outlier worth a second look.
+
+   The aggregate arrives from aa_peer_centroid() rather than being derived on
+   the device. Row-level security means a student can read only their own
+   register row, so computing this client-side saw zero peers and silently
+   fell back to neutral - and a student has no business seeing a classmate's
+   coordinates anyway. The server returns the centroid and spread, nothing
+   individual. */
+function roomConsensus(session, fix, myStudentNumber, agg){
+  const peers = (agg && agg.peers) || 0;
+  if(peers < 3) return { available:false, score:0.6, peers, distance:null };
+  const distance = haversineMeters(fix.lat, fix.lng, agg.lat, agg.lng);
+  const typical = Number(agg.spread) || 8;
+  const tolerance = Math.max(20, typical*2 + fix.accuracy);
+  return {
+    available: true,
+    score: logistic(distance, tolerance, Math.max(6, tolerance*0.35)),
+    peers,
+    distance: Math.round(distance)
+  };
+}
+
+function presenceProof(session, scannedToken){
+  const live = session.liveToken;
+  if(scannedToken && live && scannedToken === live.value){
+    const age = Date.now() - (live.at || 0);
+    if(age <= VERIFY_CFG.tokenTtlMs) return { score:1, label:'Live code scanned', detail:'Scanned a rotating code straight off the lecturer\u2019s screen' };
+    return { score:0.7, label:'Code slightly stale', detail:'The scanned code had already rotated' };
+  }
+  if(scannedToken) return { score:0.5, label:'Old code', detail:'This code has been replaced — it may have been forwarded' };
+  return { score:0.62, label:'Session ID entered', detail:'Identified by session ID rather than a live scan' };
+}
+
+function scoreCheckIn(input){
+  const { fix, samples, session, scannedToken, studentNumber } = input;
+  const containment = containmentProbability(fix, session);
+  const agreement   = sampleAgreement(samples, session);
+  const precision   = logistic(fix.accuracy, 35, 11);
+  const consensus   = roomConsensus(session, fix, studentNumber, input.peerAgg);
+  const presence    = presenceProof(session, scannedToken);
+  const integrity   = integrityFlags(samples, fix);
+
+  const penalty = integrity.flags.reduce((a,f)=>a+f.weight, 0);
+  const integrityScore = Math.max(0, 1 - penalty);
+
+  // Integrity is a discount on the whole result, not one slice of it.
+  // Location evidence that is itself suspect should not be able to
+  // carry a check-in on the strength of a tidy-looking polygon match.
+  const weights = { containment:.37, agreement:.21, precision:.13, consensus:.15, presence:.14 };
+  const evidence =
+      weights.containment * containment.p +
+      weights.agreement   * agreement +
+      weights.precision   * precision +
+      weights.consensus   * consensus.score +
+      weights.presence    * presence.score;
+  let score = Math.max(0, Math.min(1, evidence * integrityScore));
+
+  const hardFail = integrity.flags.some(f => f.code === 'frozen' || f.code === 'teleport');
+  let tier;
+  if(hardFail) tier = 'rejected';
+  else if(score >= VERIFY_CFG.autoPass) tier = 'verified';
+  else if(score >= VERIFY_CFG.reviewFloor) tier = 'review';
+  else tier = 'rejected';
+
+  const reasons = [];
+  if(containment.p < 0.5) reasons.push(`the fix sits about ${Math.round(Math.abs(containment.signedDistance))}m outside the venue`);
+  if(agreement < 0.5 && samples.length > 2) reasons.push(`only ${Math.round(agreement*100)}% of readings landed inside`);
+  if(precision < 0.5) reasons.push(`accuracy was only \u00b1${Math.round(fix.accuracy)}m`);
+  if(consensus.available && consensus.score < 0.5) reasons.push(`they were ${consensus.distance}m from where the rest of the class is sitting`);
+  if(presence.score < 0.65) reasons.push(presence.detail.toLowerCase());
+  integrity.flags.forEach(f=>reasons.push(f.label.toLowerCase()));
+
+  return {
+    score: Math.round(score*100)/100,
+    tier,
+    reasons,
+    flags: integrity.flags.map(f=>({ code:f.code, label:f.label })),
+    factors: {
+      containment: Math.round(containment.p*100)/100,
+      distance: Math.round(containment.signedDistance),
+      agreement: Math.round(agreement*100)/100,
+      precision: Math.round(precision*100)/100,
+      accuracy: fix.accuracy,
+      spread: fix.spread,
+      samples: fix.total,
+      dropped: fix.dropped,
+      consensusScore: Math.round(consensus.score*100)/100,
+      consensusPeers: consensus.peers,
+      consensusDistance: consensus.distance,
+      presence: presence.label,
+      presenceScore: presence.score,
+      integrity: Math.round(integrityScore*100)/100,
+      maxSpeed: integrity.maxSpeed
+    },
+    engine: 2
+  };
+}
+</script>
+
+<script>
+/* =====================================================================
+   ACOUSTIC LAYER — inlined so this file stands alone.
+   Capture and landmark hashing, the fusion policy (the room decides, the
+   venue polygon is the fallback), and the wiring that drives them. One
+   scope; two names were renamed where the originals collided.
+   ===================================================================== */
+(function(){
+'use strict';
+
+// js/fingerprint.js - ambient acoustic fingerprinting.
+// No dependencies. Landmark (constellation) hashing, Wang-style.
+//
+// The important change from a naive version: capture is SYNCHRONISED.
+// Two devices only match if they heard the same air at the same moment,
+// so every device records the identical wall-clock interval. Opening the
+// microphone early and slicing afterwards is what makes that possible.
+
+const CFG = {
+  RATE:      16000, // all analysis normalised to this
+  WIN:       1024,  // FFT window (samples)
+  HOP:       512,   // hop -> 31.25 frames/sec
+  MIN_BIN:   19,    // ~300 Hz
+  MAX_BIN:   384,   // ~6000 Hz
+  NEIGH_T:   2,     // local-max neighbourhood, frames
+  NEIGH_F:   4,     // local-max neighbourhood, bins
+  PEAKS_SEC: 30,    // density cap
+  FAN_OUT:   5,     // targets per anchor
+  MIN_DT:    1,     // min frame gap
+  MAX_DT:    63     // max frame gap (6 bits)
+};
+
+// ---------- 1. microphone ----------
+
+const WORKLET_SRC = `
+class Cap extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i];
+      if (this.n === this.buf.length) {
+        this.port.postMessage(this.buf.slice());
+        this.n = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('cap', Cap);
+`;
+
+/**
+ * Open the microphone and start buffering immediately. Call this BEFORE the
+ * moment you actually want to capture - a second or two of head start
+ * absorbs permission prompts and audio-graph warm-up.
+ *
+ * @param {() => number} nowMs  clock used to stamp blocks (server-corrected)
+ */
+async function openMic(nowMs = Date.now, maxSeconds = 25) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,  // these three REMOVE room sound.
+      noiseSuppression: false,  // leaving them on will silently
+      autoGainControl:  false,  // destroy your match rates.
+      channelCount: 1
+    }
+  });
+
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+
+  const mic = {
+    ctx, stream, rate: ctx.sampleRate,
+    blocks: [],     // Float32Array chunks, in order
+    samples: 0,
+    t0: null,       // wall-clock ms of blocks[0] sample 0
+    node: null, sink: null
+  };
+
+  const take = (data) => {
+    if (mic.t0 === null) {
+      // this block was already captured when the callback fired
+      mic.t0 = nowMs() - (data.length / mic.rate) * 1000;
+    }
+    mic.blocks.push(data);
+    mic.samples += data.length;
+
+    // The mic may stay open for a minute while we wait for the agreed
+    // moment. Keep only a rolling tail, and move t0 with it.
+    const cap = maxSeconds * mic.rate;
+    while (mic.samples > cap && mic.blocks.length > 1) {
+      const old = mic.blocks.shift();
+      mic.samples -= old.length;
+      mic.t0 += (old.length / mic.rate) * 1000;
+    }
+  };
+
+  let usedWorklet = false;
+  if (ctx.audioWorklet) {
+    try {
+      const url = URL.createObjectURL(
+        new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const w = new AudioWorkletNode(ctx, 'cap');
+      w.port.onmessage = e => take(e.data);
+      src.connect(w);
+      mic.node = w;
+      usedWorklet = true;
+    } catch (e) { /* fall through to the legacy path */ }
+  }
+
+  if (!usedWorklet) {
+    // legacy path. route into a muted gain node, never the speakers.
+    const sp = ctx.createScriptProcessor(4096, 1, 1);
+    sp.onaudioprocess = e =>
+      take(new Float32Array(e.inputBuffer.getChannelData(0)));
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    src.connect(sp); sp.connect(mute); mute.connect(ctx.destination);
+    mic.node = sp; mic.sink = mute;
+  }
+
+  mic.close = async () => {
+    try { if (mic.node) mic.node.disconnect(); } catch (e) {}
+    try { if (mic.sink) mic.sink.disconnect(); } catch (e) {}
+    try { src.disconnect(); } catch (e) {}
+    stream.getTracks().forEach(t => t.stop());
+    try { await ctx.close(); } catch (e) {}
+  };
+
+  return mic;
+}
+
+/** flatten everything buffered so far into one Float32Array */
+function flatten(mic) {
+  const out = new Float32Array(mic.samples);
+  let o = 0;
+  for (const b of mic.blocks) { out.set(b, o); o += b.length; }
+  return out;
+}
+
+/**
+ * Wait for `startWall`, keep buffering, then cut exactly the requested
+ * interval out of what the microphone heard.
+ * Returns { samples, lateBy } - lateBy > 0 means the mic opened after the
+ * interval had already begun and the clip is short.
+ */
+async function captureAt(mic, startWall, seconds, nowMs = Date.now, onTick) {
+  const endWall = startWall + seconds * 1000;
+  const tick = onTick
+    ? setInterval(() => onTick((startWall - nowMs()) / 1000), 100)
+    : null;
+
+  // +250 ms of slack so the tail is definitely in the buffer
+  while (nowMs() < endWall + 250) {
+    await new Promise(r => setTimeout(r, 40));
+  }
+  if (tick) clearInterval(tick);
+
+  if (mic.t0 === null) throw new Error('microphone produced no audio');
+
+  const all = flatten(mic);
+  const want = Math.round(seconds * mic.rate);
+  let start = Math.round(((startWall - mic.t0) / 1000) * mic.rate);
+  const lateBy = start < 0 ? -start / mic.rate : 0;
+  if (start < 0) start = 0;
+  if (start > all.length - 1) start = Math.max(0, all.length - want);
+
+  const clip = all.subarray(start, Math.min(all.length, start + want));
+  return { samples: resample(clip, mic.rate, CFG.RATE), lateBy };
+}
+
+function resample(input, inRate, outRate) {
+  if (inRate === outRate) return Float32Array.from(input);
+  const ratio  = inRate / outRate;
+  const outLen = Math.floor(input.length / ratio);
+  const out    = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const pos  = i * ratio;
+    const i0   = Math.floor(pos);
+    const frac = pos - i0;
+    const a = input[i0] || 0;
+    const b = input[i0 + 1] || 0;
+    out[i] = a + (b - a) * frac;
+  }
+  return out;
+}
+
+// ---------- 2. FFT ----------
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+      t = im[i]; im[i] = im[j]; im[j] = t;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    const half = len >> 1;
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < half; k++) {
+        const pr = re[i + k], pi = im[i + k];
+        const qr = re[i + k + half] * cr - im[i + k + half] * ci;
+        const qi = re[i + k + half] * ci + im[i + k + half] * cr;
+        re[i + k] = pr + qr;          im[i + k] = pi + qi;
+        re[i + k + half] = pr - qr;   im[i + k + half] = pi - qi;
+        const ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = ncr;
+      }
+    }
+  }
+}
+
+// ---------- 3. spectrogram ----------
+
+function spectrogram(samples) {
+  const { WIN, HOP } = CFG;
+  const hann = new Float32Array(WIN);
+  for (let i = 0; i < WIN; i++)
+    hann[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (WIN - 1));
+
+  const frames = [];
+  for (let s = 0; s + WIN <= samples.length; s += HOP) {
+    const re = new Float64Array(WIN);
+    const im = new Float64Array(WIN);
+    for (let i = 0; i < WIN; i++) re[i] = samples[s + i] * hann[i];
+    fft(re, im);
+    const mag = new Float32Array(WIN / 2);
+    for (let b = 0; b < WIN / 2; b++)
+      mag[b] = 20 * Math.log10(Math.hypot(re[b], im[b]) + 1e-12);
+    frames.push(mag);
+  }
+  return frames;
+}
+
+// ---------- 4. peak picking ----------
+
+function peaks(frames) {
+  const { MIN_BIN, MAX_BIN, NEIGH_T, NEIGH_F, PEAKS_SEC, HOP, RATE } = CFG;
+  const found = [];
+
+  for (let t = 0; t < frames.length; t++) {
+    // per-frame floor: median of the analysis band
+    const band = Array.from(frames[t].slice(MIN_BIN, MAX_BIN)).sort((a, b) => a - b);
+    const floor = band[band.length >> 1] + 6;
+
+    for (let f = MIN_BIN; f < MAX_BIN; f++) {
+      const v = frames[t][f];
+      if (v < floor) continue;
+      let isMax = true;
+      for (let dt = -NEIGH_T; dt <= NEIGH_T && isMax; dt++) {
+        const tt = t + dt;
+        if (tt < 0 || tt >= frames.length) continue;
+        for (let df = -NEIGH_F; df <= NEIGH_F; df++) {
+          if (dt === 0 && df === 0) continue;
+          const ff = f + df;
+          if (ff < MIN_BIN || ff >= MAX_BIN) continue;
+          if (frames[tt][ff] > v) { isMax = false; break; }
+        }
+      }
+      if (isMax) found.push({ t, f, v });
+    }
+  }
+
+  const seconds = (frames.length * HOP) / RATE;
+  const cap = Math.max(20, Math.round(PEAKS_SEC * seconds));
+  found.sort((a, b) => b.v - a.v);
+  const kept = found.slice(0, cap);
+  kept.sort((a, b) => a.t - b.t || a.f - b.f);
+  return kept;
+}
+
+// ---------- 5. hashing ----------
+
+function hashes(pk) {
+  const { FAN_OUT, MIN_DT, MAX_DT } = CFG;
+  const out = [];
+  for (let i = 0; i < pk.length; i++) {
+    let made = 0;
+    for (let j = i + 1; j < pk.length && made < FAN_OUT; j++) {
+      const dt = pk[j].t - pk[i].t;
+      if (dt < MIN_DT) continue;
+      if (dt > MAX_DT) break;
+      const f1 = pk[i].f & 0x3FF;
+      const f2 = pk[j].f & 0x3FF;
+      const h  = (f1 << 16) | (f2 << 6) | (dt & 0x3F);
+      out.push({ h, o: pk[i].t });
+      made++;
+    }
+  }
+  return out;
+}
+
+
+// ---------- 6. is this window worth believing? ----------
+//
+// The deployed matcher reads entropy.score and treats anything below 0.35 as
+// too weak to be decisive in either direction. A near-silent or perfectly
+// stationary room produces landmarks that are mostly microphone self-noise:
+// they will either match nothing, or match everything.
+//
+// Three things have to be true for a window to carry information - there has
+// to be sound, it has to change over time, and it has to have structure across
+// the spectrum. A steady air-conditioner passes the first and fails the others.
+
+const clamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const r3 = x => Math.round(x * 1000) / 1000;
+
+function entropyReport(frames, samples) {
+  const { MIN_BIN, MAX_BIN } = CFG;
+  const width = MAX_BIN - MIN_BIN;
+
+  // 1. level, in dBFS
+  let sq = 0;
+  for (let i = 0; i < samples.length; i++) sq += samples[i] * samples[i];
+  const dbfs = 20 * Math.log10(Math.sqrt(sq / Math.max(1, samples.length)) + 1e-12);
+  const level = clamp01((dbfs + 60) / 35);           // -60 dBFS -> 0, -25 -> 1
+
+  // 2. flux: how much the spectrum moves frame to frame
+  let flux = 0;
+  for (let t = 1; t < frames.length; t++) {
+    let d = 0;
+    for (let b = MIN_BIN; b < MAX_BIN; b++)
+      d += Math.abs(frames[t][b] - frames[t - 1][b]);
+    flux += d / width;
+  }
+  flux = frames.length > 1 ? flux / (frames.length - 1) : 0;
+  const change = clamp01(flux / 6);                   // 6 dB mean step -> 1
+
+  // 3. spread: structure across the analysis band
+  let sum = 0, n = 0;
+  for (const fr of frames)
+    for (let b = MIN_BIN; b < MAX_BIN; b++) { sum += fr[b]; n++; }
+  const mean = sum / Math.max(1, n);
+  let varr = 0;
+  for (const fr of frames)
+    for (let b = MIN_BIN; b < MAX_BIN; b++) varr += (fr[b] - mean) ** 2;
+  const spread = Math.sqrt(varr / Math.max(1, n));
+  const structure = clamp01((spread - 2) / 10);       // 12 dB spread -> 1
+
+  // Level GATES the other two rather than averaging with them. Microphone
+  // self-noise in a silent room fluctuates just as much as a lecture does, so
+  // a weighted mean of level and flux scores near-silence as informative -
+  // which is exactly backwards. No sound, no evidence, however lively the
+  // noise floor looks.
+  return {
+    score: r3(clamp01(level * (0.45 + 0.30 * change + 0.25 * structure))),
+    level: r3(level), change: r3(change), structure: r3(structure),
+    dbfs: r3(dbfs), spread: r3(spread)
+  };
+}
+
+// ---------- 7. one call, in the shape aa_submissions wants ----------
+
+/**
+ * Samples in, submission out. `hashes` and `offsets` are parallel int arrays,
+ * which is exactly how the matcher indexes them.
+ */
+function analyse(samples) {
+  const frames = spectrogram(samples);
+  const pk = peaks(frames);
+  const pairs = hashes(pk);
+  return {
+    hashes:  pairs.map(p => p.h),
+    offsets: pairs.map(p => p.o),
+    entropy: entropyReport(frames, samples),
+    peakCount: pk.length,
+    frameCount: frames.length
+  };
+}
+
+// js/fuse.js - the room decides; the polygon is the fallback.
+//
+//   Acoustic (primary)   every device captures the same seconds, the server
+//                        matches landmark sets and clusters the ones that
+//                        heard the same air, anchored to the lecturer's phone.
+//                        Answers: "is this phone in this ROOM, now?"
+//
+//   Location (backup)    GPS polygon containment, sample agreement, fix
+//                        precision, peer consensus, a rotating QR token, and
+//                        mock-location heuristics.
+//                        Answers: "is this phone at this venue?"
+//
+// Acoustic leads because it answers the question attendance actually asks. GPS
+// is weakest exactly where lectures happen - indoors, under concrete, drifting
+// tens of metres, unable to tell Hall A from Hall B next door - and it is the
+// layer a mock-location app defeats outright. None of that touches whether a
+// phone heard the room.
+//
+// So the polygon is not a second opinion on a question the audio already
+// answered. It is what answers the question when the audio cannot: in the
+// first minutes before a cluster exists, in a silent room, when too few
+// devices captured, or when a student refused the microphone.
+//
+// The two paths are mutually exclusive, which is also why this no longer has
+// to unpick double counting. When acoustic decides, GPS peer consensus is not
+// added to it - the room already corroborated the room. When acoustic cannot
+// decide, the location verdict stands exactly as its own engine computed it.
+
+const FUSE_CFG = {
+  autoPass:    0.72,   // the tiers the location engine already uses
+  reviewFloor: 0.42,
+
+  // An acoustic verdict on its own spans this range, so a strong cluster
+  // clears autoPass without help and a thin one does not.
+  acousticFloor: 0.45,
+  acousticSpan:  0.50,
+
+  // GPS only nudges a verdict the room already made. Small on purpose: an
+  // indoor fix is the least trustworthy thing in the stack.
+  confirmBonus: 0.08,
+  conflictDrop: 0.06,
+
+  minCorroborating: 2, // devices that must agree before absence means anything
+  lowEntropy:       0.35
+};
+
+const fuseClamp01 = x => x < 0 ? 0 : x > 1 ? 1 : x;
+const r2 = x => Math.round(x * 100) / 100;
+
+/**
+ * How much a student's acoustic result is worth, in [0,1].
+ *
+ * `acoustic` is one student folded across the windows of a class:
+ *   { available, clusterMember, confidenceBand, corroboratingDevices,
+ *     clusterSize, windowsPresent, windowsAnalysed, lecturerBound,
+ *     entropyScore }
+ */
+function acousticStrength(acoustic) {
+  if (!acoustic || !acoustic.available) return { score: 0, decisive: false };
+
+  const band = { high: 1, medium: 0.72, low: 0.35, none: 0 }[acoustic.confidenceBand] ?? 0;
+
+  // Being in one window of four is not being in four of four.
+  const total = acoustic.windowsAnalysed || 0;
+  const share = total > 0 ? (acoustic.windowsPresent || 0) / total : 0;
+
+  let score = band * (0.45 + 0.55 * share);
+
+  // A cluster without the lecturer's phone is a room, but not provably this
+  // class's room.
+  if (acoustic.lecturerBound === false) score *= 0.5;
+
+  // A quiet window cannot support a strong conclusion in either direction.
+  const quiet = (acoustic.entropyScore ?? 1) < FUSE_CFG.lowEntropy;
+  if (quiet) score *= 0.6;
+
+  // Absence only counts as evidence when there was a room to be absent from.
+  const decisive = total > 0 && !quiet &&
+    acoustic.lecturerBound !== false &&
+    (acoustic.clusterMember
+      ? true
+      : (acoustic.clusterSize || 0) >= FUSE_CFG.minCorroborating + 1);
+
+  return { score: fuseClamp01(score), decisive, share, quiet, band };
+}
+
+/**
+ * @param {object} checkIn  the record's `verification` from the location
+ *                          engine: { score, tier, factors, flags, reasons }
+ * @param {object} acoustic folded acoustic evidence, or { available:false }
+ */
+function fuse(checkIn, acoustic) {
+  const gpsScore = typeof checkIn?.score === 'number' ? checkIn.score : 0;
+  const gpsTier  = checkIn?.tier || 'review';
+  const gpsPositive = gpsTier === 'verified';
+  const hardFail = (checkIn?.flags || [])
+    .some(f => f.code === 'frozen' || f.code === 'teleport');
+
+  const a = acousticStrength(acoustic);
+  const reasons = [];
+  let score, tier, agreement;
+
+  // ---------------------------------------------------------- primary: room
+  if (acoustic && acoustic.available && acoustic.clusterMember) {
+    score = FUSE_CFG.acousticFloor + FUSE_CFG.acousticSpan * a.score;
+    reasons.push(`heard this room in ${acoustic.windowsPresent} of ` +
+      `${acoustic.windowsAnalysed} windows, alongside ` +
+      `${acoustic.corroboratingDevices} other devices`);
+
+    if (gpsPositive) {
+      agreement = 'corroborated';
+      score += FUSE_CFG.confirmBonus;
+      reasons.push('the location fix agrees');
+    } else if (gpsTier === 'rejected') {
+      // Being heard in the room outranks a fix that could not place you. This
+      // is the ordinary indoor case, not a suspicious one.
+      agreement = 'acoustic-over-location';
+      score -= FUSE_CFG.conflictDrop;
+      reasons.push('the location fix could not place this phone, which is ' +
+                   'expected indoors and does not outweigh the room');
+    } else {
+      agreement = 'acoustic-primary';
+    }
+
+  // ------------------------------------------- primary: the room says no
+  } else if (acoustic && acoustic.available && a.decisive) {
+    agreement = gpsPositive ? 'contradicted' : 'both-weak';
+    score = Math.min(gpsScore, FUSE_CFG.reviewFloor - 0.02);
+    reasons.push(gpsPositive
+      ? `no device in the room heard what this phone heard, across ` +
+        `${acoustic.windowsAnalysed} windows, though the location fix looked right`
+      : 'neither the room nor the location fix placed this phone here');
+
+  // --------------------------------------------------------- backup: polygon
+  } else {
+    agreement = 'location-fallback';
+    score = gpsScore;
+    tier = gpsTier;                       // stands exactly as its engine set it
+    reasons.push(...(checkIn?.reasons || []));
+    reasons.push(!acoustic || !acoustic.available
+      ? 'no listening window was matched, so the venue polygon decided this'
+      : a.quiet
+        ? 'the room was too quiet to be decisive, so the venue polygon decided this'
+        : 'too few devices captured for the room to be decisive, so the venue ' +
+          'polygon decided this');
+  }
+
+  if (tier === undefined) tier = tierFor(score);
+
+  // ------------------------------------------------------------- guard rails
+  //
+  // Nothing here turns silence into an absence. A student whose phone is flat,
+  // or muted, or who refused the microphone, must not be marked absent by a
+  // check they could not take part in.
+  if (agreement === 'contradicted' && tier === 'rejected') tier = 'review';
+  if (acoustic && acoustic.clusterMember && tier === 'rejected') tier = 'review';
+
+  // A device caught faking its location is not waved through for having been
+  // in the room. Present and running a mock-location app is a discipline
+  // question, and a human should see it.
+  if (hardFail) {
+    tier = 'review';
+    reasons.push('location readings showed signs of tampering - present, but worth a look');
+  }
+
+  return {
+    score: r2(fuseClamp01(score)),
+    tier,
+    status: tier === 'verified' ? 'present'
+          : tier === 'review'   ? 'pending-review'
+          : 'rejected',
+    agreement,
+    primary: agreement === 'location-fallback' ? 'location' : 'acoustic',
+    acoustic: { strength: r2(a.score), decisive: a.decisive },
+    reasons,
+    engine: 4
+  };
+}
+
+function tierFor(score) {
+  const s = fuseClamp01(score);
+  if (s >= FUSE_CFG.autoPass) return 'verified';
+  if (s >= FUSE_CFG.reviewFloor) return 'review';
+  return 'rejected';
+}
+
+// js/uvn-acoustic.js — the acoustic layer, wired into the UNIVEN app.
+//
+// The location check-in happens once, at the door. Acoustic evidence arrives
+// during the lecture, so it cannot be a seventh term in scoreCheckIn - it is a
+// second stage that revises the record afterwards.
+//
+//   1. the lecturer opens a listening window; every device in the room,
+//      theirs included, records the same few seconds
+//   2. the server matches landmark sets and clusters the devices that heard
+//      the same air, then deletes the landmarks
+//   3. fuse() combines each student's location verdict with their acoustic
+//      one, and the register is rewritten with what the two agreed on
+//
+// A module, loaded after the app's classic script, so it borrows the client
+// the compat layer already authenticated rather than opening a second session.
+
+
+const AC_CFG = {
+  LEAD_MS: 8000,        // warning before the capture instant
+  MIN_LEAD_MS: 2500,    // below this, wait for the next window
+  CAPTURE_SECONDS: 5,
+  MIC_BUFFER_SECONDS: 40,
+  POLL_MS: 1500
+};
+
+const sb = () => window.sb;
+const ok = r => { if (r.error) throw new Error(r.error.message); return r.data; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* Device clocks are not trusted: the capture instant is derived from the
+   window's server-side opens_at, and each device corrects its own offset. */
+let skew = 0;
+const now = () => Date.now() + skew;
+
+async function syncClock() {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(window.SUPABASE_REST || (sb().supabaseUrl + '/rest/v1/'), {
+        method: 'HEAD', headers: { apikey: sb().supabaseKey }
+      });
+      const rtt = Date.now() - t0;
+      const h = res.headers.get('date');
+      if (!h) break;
+      if (rtt < best) { best = rtt; skew = new Date(h).getTime() + rtt / 2 - Date.now(); }
+    } catch (e) { break; }
+  }
+  return skew;
+}
+
+/** Capture the agreed interval and hand the landmarks over. */
+async function captureAndSubmit(mic, win, userId, onTick) {
+  const secs = win.seconds || AC_CFG.CAPTURE_SECONDS;
+  const captureAtMs = new Date(win.opens_at).getTime() + AC_CFG.LEAD_MS;
+
+  const cut = await captureAt(mic, captureAtMs, secs, now, onTick);
+  const fp = analyse(cut.samples);
+  if (!fp.hashes.length) throw new Error('nothing usable was recorded');
+
+  const res = await sb().from('aa_submissions').insert({
+    window_id: win.id,
+    user_id: userId,
+    device_id: localStorage.getItem('uvn_device_id') || null,
+    hash_count: fp.hashes.length,
+    entropy: fp.entropy,
+    hashes: fp.hashes,
+    offsets: fp.offsets
+  });
+  // a second submission for the same window is a no-op, not an error
+  if (res.error && res.error.code !== '23505') throw new Error(res.error.message);
+  return fp;
+}
+
+/** The window a device should be aiming at, with enough lead time left. */
+async function pendingWindow(sessionId) {
+  const rows = ok(await sb().from('aa_windows')
+    .select('id, idx, seconds, opens_at, closes_at, analysed_at')
+    .eq('class_session_id', sessionId)
+    .is('analysed_at', null)
+    .order('idx', { ascending: false })
+    .limit(3));
+  for (const w of rows || []) {
+    const at = new Date(w.opens_at).getTime() + AC_CFG.LEAD_MS;
+    if (at - now() < AC_CFG.MIN_LEAD_MS) continue;
+    if (now() > new Date(w.closes_at).getTime()) continue;
+    return w;
+  }
+  return null;
+}
+
+// =====================================================================
+// lecturer
+// =====================================================================
+
+let lecMic = null;
+
+/** Open a window and anchor it with the lecturer's own device. */
+async function openListeningWindow(sessionId, onState) {
+  await syncClock();
+  const say = s => onState && onState(s);
+
+  if (!lecMic) {
+    say({ phase: 'mic', text: 'Asking for the microphone…' });
+    lecMic = await openMic(now, AC_CFG.MIC_BUFFER_SECONDS);
+  }
+
+  const win = ok(await sb().rpc('aa_open_window',
+    { p_session: sessionId, p_seconds: AC_CFG.CAPTURE_SECONDS }));
+  say({ phase: 'opened', window: win, text: 'Window ' + (win.idx + 1) + ' open' });
+
+  const { data: { user } } = await sb().auth.getUser();
+  const fp = await captureAndSubmit(lecMic, win, user.id, left => {
+    say(left > 0
+      ? { phase: 'countdown', seconds: Math.ceil(left),
+          text: 'Everyone records in ' + Math.ceil(left) }
+      : { phase: 'listening', text: 'Listening…' });
+  });
+
+  say({
+    phase: 'anchored', window: win, entropy: fp.entropy.score,
+    text: fp.entropy.score < 0.35
+      ? 'Anchored, but the room is very quiet (' + fp.entropy.score.toFixed(2) +
+        ') — this window may not be decisive.'
+      : 'Anchored with ' + fp.hashes.length + ' landmarks. Students can keep capturing.'
+  });
+  return win;
+}
+
+function releaseLecturerMic() {
+  if (lecMic) { lecMic.close(); lecMic = null; }
+}
+
+/** Match a window, then fold both layers into the register. */
+async function matchWindow(sessionId, windowId, onState) {
+  const say = s => onState && onState(s);
+  say({ phase: 'matching', text: 'Matching…' });
+
+  const { data, error } = await sb().functions.invoke('analyse-window', { body: { windowId } });
+  if (error) {
+    let detail = error.message;
+    try { detail = (await error.context.json()).error || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  if (data && data.error) throw new Error(data.error);
+
+  const fused = await fuseSession(sessionId);
+  say({
+    phase: 'matched', result: data, fused,
+    text: 'Matched ' + data.submissions + ' devices, cluster of ' + data.clusterSize +
+          (data.lecturerBound ? ', anchored to your phone' : ' — WITHOUT your phone') +
+          '. ' + fused.changed + ' of ' + fused.total + ' register rows revised.'
+  });
+  return data;
+}
+
+/**
+ * Combine the two layers for every student in the session.
+ *
+ * The location verdict is whatever scoreCheckIn stored at the door; the
+ * acoustic verdict is folded across every analysed window. fuse() decides what
+ * they add up to, and refuses to turn either one into an absence on its own.
+ */
+async function fuseSession(sessionId) {
+  const windows = ok(await sb().from('aa_windows')
+    .select('id, cluster_size, lecturer_bound, analysed_at')
+    .eq('class_session_id', sessionId).not('analysed_at', 'is', null));
+  const ids = windows.map(w => w.id);
+
+  const register = ok(await sb().from('aa_attendance')
+    .select('student_id, verification, windows_present, windows_analysed, overridden_by')
+    .eq('class_session_id', sessionId));
+
+  if (!ids.length) return { total: register.length, changed: 0 };
+
+  const evidence = ok(await sb().from('aa_evidence')
+    .select('user_id, window_id, cluster_member, confidence_band, corroborating_devices, entropy_score')
+    .in('window_id', ids));
+
+  const byWindow = {};
+  windows.forEach(w => { byWindow[w.id] = w; });
+
+  const byUser = new Map();
+  for (const e of evidence) {
+    if (!byUser.has(e.user_id)) byUser.set(e.user_id, []);
+    byUser.get(e.user_id).push(e);
+  }
+
+  const RANK = { none: 0, low: 1, medium: 2, high: 3 };
+  let changed = 0;
+
+  for (const row of register) {
+    if (row.overridden_by) continue;          // a human already ruled on this
+    const mine = byUser.get(row.student_id) || [];
+
+    let acoustic;
+    if (!mine.length) {
+      acoustic = { available: false };
+    } else {
+      // best band across windows, worst-case entropy, and whether any cluster
+      // this student sat in was actually anchored to the lecturer
+      let band = 'none', peers = 0, entropy = 1, member = false, clusterSize = 0;
+      let bound = false;
+      for (const e of mine) {
+        if (RANK[e.confidence_band] > RANK[band]) band = e.confidence_band;
+        peers = Math.max(peers, e.corroborating_devices || 0);
+        entropy = Math.min(entropy, e.entropy_score == null ? 1 : e.entropy_score);
+        if (e.cluster_member) member = true;
+        const w = byWindow[e.window_id] || {};
+        clusterSize = Math.max(clusterSize, w.cluster_size || 0);
+        if (w.lecturer_bound) bound = true;
+      }
+      acoustic = {
+        available: true,
+        clusterMember: member,
+        confidenceBand: band,
+        corroboratingDevices: peers,
+        clusterSize: clusterSize,
+        windowsPresent: row.windows_present || mine.filter(e => e.cluster_member).length,
+        windowsAnalysed: row.windows_analysed || ids.length,
+        lecturerBound: bound,
+        entropyScore: entropy
+      };
+    }
+
+    const verdict = fuse(row.verification, acoustic);
+    const res = await sb().rpc('aa_set_fused', {
+      p_session: sessionId, p_student: row.student_id, p_fused: verdict
+    });
+    if (!res.error && res.data) changed++;
+  }
+
+  return { total: register.length, changed };
+}
+
+// =====================================================================
+// student
+// =====================================================================
+
+let stuMic = null, watching = false, seen = new Set();
+
+/**
+ * Called once, from a tap, after the student has checked in. The microphone
+ * stays open for the class - only a rolling tail is held, in memory - and each
+ * window the lecturer opens is captured automatically.
+ */
+async function startListening(sessionId, onState) {
+  const say = s => onState && onState(s);
+  await syncClock();
+
+  if (!stuMic) {
+    say({ phase: 'mic', text: 'Asking for the microphone…' });
+    stuMic = await openMic(now, AC_CFG.MIC_BUFFER_SECONDS);
+  }
+  const { data: { user } } = await sb().auth.getUser();
+
+  watching = true;
+  say({ phase: 'waiting', text: 'Listening for your lecturer to open a window' });
+
+  (async function loop() {
+    while (watching) {
+      let win = null;
+      try { win = await pendingWindow(sessionId); }
+      catch (e) { await sleep(4000); continue; }
+
+      if (!win || seen.has(win.id)) { await sleep(AC_CFG.POLL_MS); continue; }
+
+      try {
+        const fp = await captureAndSubmit(stuMic, win, user.id, left => {
+          if (!watching) return;
+          say(left > 0
+            ? { phase: 'countdown', seconds: Math.ceil(left),
+                text: 'Window ' + (win.idx + 1) + ' — recording in ' + Math.ceil(left) }
+            : { phase: 'listening', text: 'Listening…' });
+        });
+        seen.add(win.id);
+        say({ phase: 'submitted', window: win.idx + 1, hashes: fp.hashes.length,
+              text: 'Window ' + (win.idx + 1) + ' sent. Waiting for the next one.' });
+      } catch (e) {
+        seen.add(win.id);
+        say({ phase: 'error', text: e.message });
+        await sleep(2000);
+      }
+    }
+  })();
+}
+
+function stopListening() {
+  watching = false;
+  if (stuMic) { stuMic.close(); stuMic = null; }
+  seen = new Set();
+}
+
+const acousticConfig = AC_CFG;
+
+// The app is a classic script, so hand it plain globals.
+window.uvnAcoustic = {
+  openListeningWindow, matchWindow, fuseSession, releaseLecturerMic,
+  startListening, stopListening, config: AC_CFG
+};
+window.dispatchEvent(new Event('uvn-acoustic-ready'));
+})();
+</script>
+
+<script>
+/* =====================================================================
+   UNIVEN ATTENDANCE — React components.
+
+   No build step: React and htm come from a CDN, and htm gives real
+   template syntax without JSX compilation. `html` below is React
+   .createElement with a tagged template in front of it, so everything
+   here is ordinary React - hooks, state, effects, the lot.
+
+   The scoring engine above this (GPS geometry, scoreCheckIn) and the
+   acoustic bundle are plain functions, shared unchanged.
+   ===================================================================== */
+const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
+const html = htm.bind(React.createElement);
+
+const SUPABASE_URL = 'https://rbnnbmduwrvokhbkezyh.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Ddn7Hew9PxMs0ozk7wP0XQ_ZePJsncq';
+
+/* Student numbers resolve to addresses on this domain, which is how a
+   student can sign in with a number instead of an email. The alternative -
+   looking the number up before authenticating - would mean an endpoint that
+   maps any student number to that person's email address, readable by
+   anyone. Not worth it. */
+const EMAIL_DOMAIN = 'mvula.univen.ac.za';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true }
+});
+window.sb = sb;   // the acoustic bundle borrows this client
+
+const unwrap = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- data layer
+
+const api = {
+  emailFor(idOrEmail) {
+    const v = idOrEmail.trim();
+    return v.includes('@') ? v : v + '@' + EMAIL_DOMAIN;
+  },
+
+  signIn: (idOrEmail, password) =>
+    sb.auth.signInWithPassword({ email: api.emailFor(idOrEmail), password })
+      .then(unwrap),
+
+  signUp: ({ studentNumber, name, email, password }) =>
+    sb.auth.signUp({
+      email, password,
+      options: { data: {
+        aa_display_name: name, aa_role: 'student', aa_student_number: studentNumber
+      } }
+    }).then(unwrap),
+
+  signOut: () => sb.auth.signOut(),
+
+  profile: uid => sb.from('aa_profiles')
+    .select('id, role, display_name, student_number, email, photo_data, created_at')
+    .eq('id', uid).maybeSingle().then(unwrap),
+
+  createProfile: row => sb.from('aa_profiles').insert(row).select().single().then(unwrap),
+
+  enrolments: () => sb.from('aa_enrolments')
+    .select('course_id, aa_courses ( code, title )').then(unwrap),
+
+  openSessions: () => sb.from('aa_class_sessions')
+    .select(`id, title, venue, join_code, status, started_at, expires_at,
+             lat, lng, radius_meters, venue_polygon, live_token,
+             reflection_min_words, meta, aa_courses ( code, title )`)
+    .eq('status', 'open')
+    .order('started_at', { ascending: false }).then(unwrap),
+
+  session: id => sb.from('aa_class_sessions')
+    .select(`id, title, venue, join_code, status, started_at, expires_at,
+             lat, lng, radius_meters, venue_polygon, live_token,
+             reflection_min_words, meta, aa_courses ( code, title )`)
+    .eq('id', id).maybeSingle().then(unwrap),
+
+  peerCentroid: sessionId =>
+    sb.rpc('aa_peer_centroid', { p_session: sessionId }).then(unwrap),
+
+  checkIn: (sessionId, { status, gps, verification, deviceId, reflection, words }) =>
+    sb.rpc('aa_check_in', {
+      p_session: sessionId, p_status: status, p_gps: gps,
+      p_verification: verification, p_device: deviceId,
+      p_reflection: reflection || null, p_words: words || null
+    }).then(unwrap),
+
+  myAttendance: () => sb.from('aa_attendance')
+    .select(`status, source, confidence, windows_present, windows_analysed,
+             checked_in_at, fused, verification,
+             aa_class_sessions ( title, venue, started_at ),
+             aa_courses ( code, title )`)
+    .order('updated_at', { ascending: false }).limit(40).then(unwrap)
+};
+
+/** A session row, shaped the way the scoring engine expects it. */
+const toEngineSession = s => ({
+  lat: s.lat, lng: s.lng,
+  radiusMeters: s.radius_meters || DEFAULT_RADIUS_METERS,
+  venuePolygon: s.venue_polygon,
+  venueName: (s.meta && s.meta.venueName) || s.venue,
+  moduleCode: (s.meta && s.meta.moduleCode) || (s.aa_courses && s.aa_courses.code) || '',
+  liveToken: s.live_token,
+  expiresAt: s.expires_at ? new Date(s.expires_at).getTime() : null,
+  reflectionMinWords: s.reflection_min_words
+});
+
+// ---------------------------------------------------------------- auth context
+
+const Auth = createContext(null);
+const useAuth = () => useContext(Auth);
+
+function AuthProvider({ children }) {
+  const [state, setState] = useState({ loading: true, user: null, profile: null });
+
+  const load = useCallback(async session => {
+    if (!session) { setState({ loading: false, user: null, profile: null }); return; }
+    let profile = null;
+    try { profile = await api.profile(session.user.id); } catch (e) {}
+    setState({ loading: false, user: session.user, profile });
+  }, []);
+
+  useEffect(() => {
+    sb.auth.getSession().then(r => load(r.data.session));
+    const { data } = sb.auth.onAuthStateChange((_e, s) => load(s));
+    return () => data.subscription.unsubscribe();
+  }, [load]);
+
+  const value = useMemo(() => ({
+    ...state,
+    refresh: async () => {
+      const r = await sb.auth.getSession();
+      await load(r.data.session);
+    },
+    signOut: async () => { await api.signOut(); }
+  }), [state, load]);
+
+  return html`<${Auth.Provider} value=${value}>${children}<//>`;
+}
+
+// ---------------------------------------------------------------- small pieces
+
+const Icon = ({ name, ...rest }) => html`<i class=${'fas ' + name} ...${rest} />`;
+
+function Btn({ kind = 'primary', small, children, ...rest }) {
+  const cls = ['btn', 'btn-' + kind, small ? 'btn-sm' : ''].filter(Boolean).join(' ');
+  return html`<button class=${cls} ...${rest}>${children}</button>`;
+}
+
+function Field({ label, hint, ...input }) {
+  return html`
+    <div class="field">
+      <label>${label}${hint && html`<span style=${{'fontWeight': '400', 'color': 'var(--text-faint)'}}> ${hint}</span>`}</label>
+      <div class="input-wrap">
+        ${input.icon && html`<${Icon} name=${input.icon} />`}
+        <input class="input" ...${{ ...input, icon: undefined }} />
+      </div>
+    </div>`;
+}
+
+function Status({ msg }) {
+  if (!msg) return null;
+  return html`<div class=${'status-msg ' + (msg.kind || '')}>${msg.text}</div>`;
+}
+
+const Badge = ({ status }) => {
+  const label = { present: 'Present', 'pending-review': 'Pending review',
+                  review: 'Pending review', rejected: 'Rejected',
+                  absent: 'Absent', excused: 'Excused',
+                  not_recorded: 'Not recorded' }[status] || status;
+  const cls = status === 'present' ? 'ok'
+            : status === 'rejected' || status === 'absent' ? 'rejected' : '';
+  return html`<span class=${'badge ' + cls}>${label}</span>`;
+};
+
+// ---------------------------------------------------------------- splash / role
+
+const Splash = () => html`
+  <div class="screen active auth-screen">
+    <div class="splash-crest"><${Icon} name="fa-graduation-cap" /></div>
+    <div class="splash-title">UNIVEN Attendance</div>
+    <div class="splash-sub">Checking your session…</div>
+    <div class="splash-loader"><div class="spin" /></div>
+  </div>`;
+
+const RolePicker = ({ onStudent }) => html`
+  <div class="screen active auth-screen">
+    <div class="auth-hero">
+      <div class="splash-title">Your Campus.<br />Your Journey.</div>
+    </div>
+    <div class="role-cards">
+      <div class="role-card" onClick=${onStudent}>
+        <div class="avatar"><${Icon} name="fa-graduation-cap" /></div>
+        <div>
+          <h4>I'm a Student</h4>
+          <span>Check in to class & track attendance</span>
+        </div>
+        <${Icon} name="fa-chevron-right" />
+      </div>
+      <div class="role-card" style=${{'opacity': '.55'}}>
+        <div class="avatar"><${Icon} name="fa-chalkboard-user" /></div>
+        <div>
+          <h4>I'm a Lecturer</h4>
+          <span>Not part of this pass — use univen.html</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+// ---------------------------------------------------------------- auth screen
+
+function StudentAuth({ onBack }) {
+  const { refresh } = useAuth();
+  const [tab, setTab] = useState('login');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [f, setF] = useState({ id: '', pwd: '', number: '', name: '', email: '', p1: '', p2: '' });
+  const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
+
+  async function login() {
+    if (!f.id || !f.pwd) return setMsg({ kind: 'error', text: 'Enter your details.' });
+    setBusy(true); setMsg(null);
+    try { await api.signIn(f.id, f.pwd); await refresh(); }
+    catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function register() {
+    if (!f.number || !f.name || !f.email)
+      return setMsg({ kind: 'error', text: 'Please fill in all fields.' });
+    if (f.p1.length < 8)
+      return setMsg({ kind: 'error', text: 'Your password needs at least 8 characters.' });
+    if (f.p1 !== f.p2)
+      return setMsg({ kind: 'error', text: 'The two passwords do not match.' });
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.signUp({ studentNumber: f.number, name: f.name,
+                                   email: f.email, password: f.p1 });
+      if (!r.session) setMsg({ kind: 'info', text: 'Account created. Confirm the link in your email, then log in.' });
+      else await refresh();
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+    finally { setBusy(false); }
+  }
+
+  return html`
+    <div class="screen active auth-screen">
+      <div class="topbar">
+        <button class="icon-btn" onClick=${onBack}><${Icon} name="fa-arrow-left" /></button>
+        <h3>Student Account</h3>
+      </div>
+      <div class="form-card">
+        <div class="tab-switch">
+          <button class=${tab === 'login' ? 'active' : ''} onClick=${() => setTab('login')}>Log In</button>
+          <button class=${tab === 'register' ? 'active' : ''} onClick=${() => setTab('register')}>Register</button>
+        </div>
+
+        ${tab === 'login' ? html`
+          <${Field} label="Student Number or Email" icon="fa-id-card"
+            value=${f.id} onChange=${set('id')} placeholder=${'e.g. 21012345 or you@' + EMAIL_DOMAIN} />
+          <${Field} label="Password" icon="fa-lock" type="password"
+            value=${f.pwd} onChange=${set('pwd')} placeholder="••••••••" />
+          <${Btn} onClick=${login} disabled=${busy}>
+            <${Icon} name="fa-arrow-right-to-bracket" /> ${busy ? 'Signing in…' : 'Log In'}
+          <//>
+        ` : html`
+          <${Field} label="Student Number" icon="fa-hashtag"
+            value=${f.number} onChange=${set('number')} placeholder="e.g. 21012345" />
+          <${Field} label="Full Name" icon="fa-user"
+            value=${f.name} onChange=${set('name')} placeholder="e.g. Rendani Mulaudzi" />
+          <${Field} label="Email Address" icon="fa-envelope" type="email"
+            value=${f.email} onChange=${set('email')} placeholder=${'you@' + EMAIL_DOMAIN} />
+          <${Field} label="Password" icon="fa-lock" type="password"
+            value=${f.p1} onChange=${set('p1')} placeholder="At least 8 characters" />
+          <${Field} label="Confirm Password" icon="fa-lock" type="password"
+            value=${f.p2} onChange=${set('p2')} placeholder="Repeat your password" />
+          <${Btn} kind="gold" onClick=${register} disabled=${busy}>
+            <${Icon} name="fa-user-plus" /> ${busy ? 'Creating…' : 'Create Account'}
+          <//>
+        `}
+        <${Status} msg=${msg} />
+      </div>
+    </div>`;
+}
+
+function friendly(e) {
+  const m = e.message || String(e);
+  if (/Invalid login credentials/i.test(m)) return 'Wrong student number, email or password.';
+  if (/Email not confirmed/i.test(m)) return 'Confirm the link in your email first.';
+  if (/User already registered/i.test(m)) return 'That email already has an account — log in instead.';
+  if (/student_number_key/i.test(m)) return 'That student number already has an account.';
+  if (/Failed to fetch/i.test(m)) return 'Cannot reach the server. Check your connection.';
+  return m;
+}
+
+// ---------------------------------------------------------------- profile gap
+
+function FinishProfile() {
+  const { user, refresh } = useAuth();
+  const [f, setF] = useState({ name: '', number: '' });
+  const [msg, setMsg] = useState(null);
+  const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
+
+  return html`
+    <div class="screen active auth-screen">
+      <div class="form-card">
+        <h3>Finish your profile</h3>
+        <p class="splash-sub">Signed in as ${user.email}, but this account has no
+          attendance profile yet.</p>
+        <${Field} label="Full Name" icon="fa-user" value=${f.name} onChange=${set('name')} />
+        <${Field} label="Student Number" icon="fa-hashtag" value=${f.number} onChange=${set('number')} />
+        <${Btn} onClick=${async () => {
+          if (!f.name || !f.number) return setMsg({ kind: 'error', text: 'Both fields are required.' });
+          try {
+            await api.createProfile({ id: user.id, role: 'student',
+              display_name: f.name, student_number: f.number, email: user.email });
+            await refresh();
+          } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+        }}>Save and continue<//>
+        <${Status} msg=${msg} />
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- verify overlay
+
+/** The five-step live check, with the ring the original drew. */
+function VerifyOverlay({ steps, readings, unit, onCancel }) {
+  const RING = 408;
+  const done = steps.filter(s => s.state).length;
+  const offset = RING - Math.max(0, Math.min(1, done / steps.length)) * RING;
+  const ico = s => s === 'ok' ? 'fa-circle-check'
+                 : s === 'warn' ? 'fa-triangle-exclamation'
+                 : s === 'bad' ? 'fa-circle-xmark' : 'fa-circle-notch';
+  return html`
+    <div class="scan-result-overlay">
+      <div class="result-card verify-card">
+        <div class="vf-dial">
+          <div class="vf-sweep" />
+          <svg viewBox="0 0 150 150" aria-hidden="true">
+            <circle class="vf-ring-bg" cx="75" cy="75" r="65" />
+            <circle class="vf-ring-fg" cx="75" cy="75" r="65"
+              style=${{ strokeDashoffset: String(offset) }} />
+          </svg>
+          <div class="vf-core">
+            <div class="n">${readings}</div>
+            <div class="u">${unit}</div>
+          </div>
+        </div>
+        <h3>Verifying your check-in</h3>
+        <p>Stay where you are for a few seconds.</p>
+        <div class="vf-checks">
+          ${steps.map(s => html`
+            <div key=${s.id} class=${'vf-check ' + (s.state || '')}>
+              <${Icon} name=${ico(s.state)} />
+              <span>${s.label}</span>
+              <span class="val">${s.value || ''}</span>
+            </div>`)}
+        </div>
+        <${Btn} kind="ghost" small onClick=${onCancel}>Cancel<//>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- result card
+
+function ResultOverlay({ result, onClose, onListen, listening }) {
+  if (!result) return null;
+  const { kind, title, text, verification } = result;
+  const icon = kind === 'ok' ? 'fa-circle-check'
+             : kind === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-xmark';
+  return html`
+    <div class="scan-result-overlay">
+      <div class="result-card">
+        <div class=${'result-icon ' + kind}><${Icon} name=${icon} /></div>
+        <h3>${title}</h3>
+        <p>${text}</p>
+        ${verification && html`<${Confidence} v=${verification} />`}
+        ${onListen && !listening && html`
+          <p style=${{'fontSize': '.7rem', 'color': 'var(--text-faint)', 'lineHeight': '1.5', 'margin': '0 0 10px'}}>
+            This is the main attendance check — your phone records the same few
+            seconds as everyone else when your lecturer opens a window. The audio
+            never leaves the device, only a few hundred numbers describing the
+            sound pattern, deleted once attendance is worked out.
+          </p>
+          <${Btn} kind="gold" onClick=${onListen}>
+            <${Icon} name="fa-ear-listen" /> Start listening for the room
+          <//>`}
+        ${listening && html`
+          <p style=${{'fontSize': '.7rem', 'color': 'var(--text-faint)', 'lineHeight': '1.5', 'margin': '0 0 10px'}}>
+            Your phone is listening for the room. Leave this page open.
+          </p>`}
+        <${Btn} onClick=${onClose}>Done<//>
+      </div>
+    </div>`;
+}
+
+/** Shows the student exactly what the decision rested on. */
+function Confidence({ v }) {
+  const pct = Math.round((v.score || 0) * 100);
+  const cls = v.score >= 0.72 ? 'ok' : v.score >= 0.42 ? 'warn' : 'bad';
+  return html`
+    <div class="conf-wrap">
+      <div class="conf-head">
+        <span>Confidence</span>
+        <span class=${'conf-pill ' + cls}>${pct}%</span>
+      </div>
+      <div class="conf-track">
+        <div class=${'conf-fill ' + cls} style=${{ width: pct + '%' }} />
+      </div>
+      ${v.reasons && v.reasons.length ? html`
+        <div class="rv-why">${v.reasons.slice(0, 3).join(' · ')}</div>` : null}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- listening bar
+
+function ListeningBar({ state, onStop }) {
+  if (!state) return null;
+  const num = state.phase === 'countdown' ? state.seconds
+            : state.phase === 'submitted' ? '✓' : '•';
+  return html`
+    <div id="ac-student-bar">
+      <div class="num">${num}</div>
+      <div class="txt">${state.text}</div>
+      <button onClick=${onStop}>Stop</button>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- check-in flow
+
+const VF_STEPS = [
+  { id: 'signal',    label: 'Reading your location' },
+  { id: 'boundary',  label: 'Matching the venue outline' },
+  { id: 'stability', label: 'Checking reading stability' },
+  { id: 'room',      label: 'Comparing with the room' },
+  { id: 'device',    label: 'Confirming device and code' }
+];
+
+function useCheckIn() {
+  const { profile } = useAuth();
+  const [verify, setVerify] = useState(null);     // {steps, readings, unit}
+  const [result, setResult] = useState(null);
+  const cancelled = useRef(false);
+
+  const run = useCallback(async rawCode => {
+    cancelled.current = false;
+    const parts = String(rawCode).split('~');
+    const sessionId = parts[0].trim();
+    const token = parts[1] ? parts[1].trim() : null;
+
+    let steps = VF_STEPS.map(s => ({ ...s, state: null, value: '' }));
+    const paint = (patch = {}) => setVerify(v => ({
+      steps, readings: 0, unit: 'readings', ...(v || {}), ...patch, steps
+    }));
+    paint({ readings: 0, unit: 'readings' });
+
+    const mark = (id, state, value) => {
+      steps = steps.map(s => s.id === id ? { ...s, state, value } : s);
+      paint();
+    };
+
+    try {
+      const row = await api.session(sessionId);
+      if (!row) throw new Error('This code does not match an open session.');
+      const session = toEngineSession(row);
+      if (session.expiresAt && Date.now() > session.expiresAt)
+        throw new Error('This session is no longer accepting check-ins.');
+
+      // --- GPS samples, with the dial counting them in
+      const samples = await collectGpsSamples(list =>
+        paint({ readings: list.length, unit: 'readings' }));
+      if (cancelled.current) { setVerify(null); return; }
+
+      const fix = robustFix(samples);
+      paint({ readings: Math.round(fix.accuracy), unit: 'metre accuracy' });
+      mark('signal', fix.accuracy <= 35 ? 'ok' : 'warn',
+        samples.length + ' · ±' + Math.round(fix.accuracy) + 'm');
+
+      let peerAgg = null;
+      try { peerAgg = await api.peerCentroid(sessionId); } catch (e) {}
+
+      const verification = scoreCheckIn({
+        fix, samples, session, peerAgg,
+        scannedToken: token,
+        studentNumber: profile.student_number
+      });
+      const f = verification.factors;
+
+      await sleep(240);
+      mark('boundary', f.containment >= 0.7 ? 'ok' : f.containment >= 0.4 ? 'warn' : 'bad',
+        f.distance <= 0 ? 'inside' : f.distance + 'm out');
+      await sleep(200);
+      mark('stability', f.agreement >= 0.7 ? 'ok' : f.agreement >= 0.4 ? 'warn' : 'bad',
+        Math.round(f.agreement * 100) + '% agree');
+      await sleep(200);
+      mark('room', !f.consensusPeers ? 'warn' : f.consensusScore >= 0.6 ? 'ok' : 'bad',
+        f.consensusPeers ? (f.consensusDistance + 'm off') : 'first in');
+      await sleep(200);
+      mark('device', f.integrity >= 0.9 ? 'ok' : f.integrity >= 0.5 ? 'warn' : 'bad',
+        f.presence);
+      await sleep(420);
+      setVerify(null);
+
+      /* The polygon is the backup, not the gate. A weak fix indoors is the
+         expected case, so it no longer refuses the check-in - the record goes
+         on at review and the room settles it. Tampering is different: a frozen
+         or teleporting feed is a deliberate act and still stops here. */
+      const tampered = (verification.flags || [])
+        .some(x => x.code === 'frozen' || x.code === 'teleport');
+      if (tampered) {
+        setResult({ kind: 'fail', title: 'Check-in not accepted', verification,
+          text: 'These location readings look artificial rather than weak — ' +
+                verification.reasons.slice(0, 2).join(', ') +
+                '. Turn off any mock-location app and try again.' });
+        return null;
+      }
+
+      const res = await api.checkIn(sessionId, {
+        status: verification.tier === 'verified' ? 'present' : 'review',
+        gps: { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy },
+        verification,
+        deviceId: getDeviceId()
+      });
+
+      if (res && res.committed === false) {
+        setResult({ kind: 'warn', title: 'Already checked in',
+          text: 'This session already has a check-in from you.' });
+        return null;
+      }
+
+      setResult({
+        kind: verification.tier === 'verified' ? 'ok' : 'warn',
+        title: verification.tier === 'verified' ? 'Checked in' : 'On the register — pending',
+        verification,
+        text: verification.tier === 'verified'
+          ? `You're marked present for ${session.moduleCode || 'this session'} at ${session.venueName || ''}.`
+          : 'The location evidence was borderline. Keeping the app listening can settle it without anyone having to judge.'
+      });
+      return sessionId;
+    } catch (e) {
+      setVerify(null);
+      setResult({ kind: 'fail', title: 'Could not check you in', text: e.message });
+      return null;
+    }
+  }, [profile]);
+
+  const cancel = () => { cancelled.current = true; setVerify(null); };
+  return { verify, result, setResult, run, cancel };
+}
+
+// ---------------------------------------------------------------- scanner
+
+function ScanScreen({ onBack, onCode }) {
+  const [manual, setManual] = useState('');
+  const [camErr, setCamErr] = useState(null);
+  const scanner = useRef(null);
+  const fired = useRef(false);
+
+  useEffect(() => {
+    if (typeof Html5Qrcode === 'undefined') { setCamErr('Scanner library unavailable'); return; }
+    let s;
+    try { s = new Html5Qrcode('reader'); } catch (e) { setCamErr(e.message); return; }
+    scanner.current = s;
+    s.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } },
+      text => { if (!fired.current) { fired.current = true; stop().then(() => onCode(text)); } },
+      () => {}
+    ).catch(e => setCamErr('Camera unavailable — type the session code instead.'));
+    return () => { stop(); };
+  }, []);
+
+  async function stop() {
+    const s = scanner.current;
+    scanner.current = null;
+    if (!s) return;
+    try { await s.stop(); s.clear(); } catch (e) {}
+  }
+
+  return html`
+    <div class="screen active scan-wrap">
+      <div class="scan-step-row">
+        <button class="icon-btn" onClick=${() => stop().then(onBack)}>
+          <${Icon} name="fa-arrow-left" /></button>
+        <span class="scan-step-pill">Scan to Check In</span>
+      </div>
+      <h3>Scan Session QR</h3>
+      <p class="scan-hint">Point your camera at the lecturer's QR code</p>
+      <div class="camera-stage">
+        <div id="reader" />
+        <div class="scan-frame"><div class="scan-line" /></div>
+      </div>
+      ${camErr && html`<div class="status-msg error">${camErr}</div>`}
+      <div class="scan-manual">
+        <label>or enter session code</label>
+        <div class="input-wrap">
+          <input class="input" value=${manual} placeholder="Session ID"
+            onChange=${e => setManual(e.target.value)} />
+        </div>
+        <${Btn} small onClick=${() => manual.trim() && stop().then(() => onCode(manual.trim()))}>
+          Look up<//>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- student home
+
+function StudentHome({ go, onCheckIn }) {
+  const { profile, signOut } = useAuth();
+  const [sessions, setSessions] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [enrol, setEnrol] = useState([]);
+
+  useEffect(() => {
+    api.openSessions().then(setSessions).catch(() => setSessions([]));
+    api.myAttendance().then(setRecords).catch(() => {});
+    api.enrolments().then(setEnrol).catch(() => {});
+  }, []);
+
+  const present = records.filter(r => r.status === 'present').length;
+
+  return html`
+    <div class="screen active page-pad">
+      <div class="topbar">
+        <h3>Hi, ${(profile.display_name || '').split(' ')[0] || 'there'}</h3>
+        <button class="icon-btn" onClick=${signOut}><${Icon} name="fa-right-from-bracket" /></button>
+      </div>
+
+      <div class="greet-card">
+        <div class="greet-stats">
+          <div class="stat-box"><b>${present}</b><span>present</span></div>
+          <div class="stat-box"><b>${records.length}</b><span>records</span></div>
+          <div class="stat-box"><b>${enrol.length}</b><span>courses</span></div>
+        </div>
+      </div>
+
+      <div class="quick-actions">
+        <div class="qa-btn" onClick=${() => go('scan')}>
+          <${Icon} name="fa-qrcode" /><span>Scan QR</span>
+        </div>
+        <div class="qa-btn" onClick=${() => go('history')}>
+          <${Icon} name="fa-clock-rotate-left" /><span>History</span>
+        </div>
+      </div>
+
+      <div class="section-title">Open classes</div>
+      ${sessions === null
+        ? html`<div class="skel" />`
+        : sessions.length === 0
+          ? html`<div class="empty"><${Icon} name="fa-calendar-xmark" />
+                   <h4>Nothing open</h4>
+                   <p>${enrol.length ? 'No class is accepting check-ins right now.'
+                       : 'You are not on any class list yet — ask your lecturer to add ' +
+                         (profile.student_number || 'your student number') + '.'}</p>
+                 </div>`
+          : sessions.map(s => html`
+              <div key=${s.id} class="class-card" onClick=${() => onCheckIn(s.id)}>
+                <div>
+                  <h4>${(s.aa_courses && s.aa_courses.code) || (s.meta && s.meta.moduleCode) || s.title}</h4>
+                  <span>${s.venue || ''}</span>
+                </div>
+                <span class="session-status live">
+                  <${Icon} name="fa-circle" style=${{ fontSize: '.5rem' }} /> LIVE</span>
+              </div>`)}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- history
+
+function History({ onBack }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.myAttendance().then(setRows).catch(() => setRows([])); }, []);
+  return html`
+    <div class="screen active page-pad">
+      <div class="topbar">
+        <button class="icon-btn" onClick=${onBack}><${Icon} name="fa-arrow-left" /></button>
+        <h3>My attendance</h3>
+      </div>
+      ${rows === null ? html`<div class="skel" />`
+        : rows.length === 0
+          ? html`<div class="empty"><${Icon} name="fa-clock-rotate-left" />
+                   <h4>Nothing yet</h4><p>Your check-ins will appear here.</p></div>`
+          : rows.map((r, i) => html`
+              <div key=${i} class="history-item">
+                <div>
+                  <h4>${(r.aa_courses && r.aa_courses.code) || '—'}
+                    ${r.aa_class_sessions && r.aa_class_sessions.title
+                      ? ' · ' + r.aa_class_sessions.title : ''}</h4>
+                  <span>${r.checked_in_at
+                    ? new Date(r.checked_in_at).toLocaleString()
+                    : (r.aa_class_sessions && r.aa_class_sessions.started_at
+                        ? new Date(r.aa_class_sessions.started_at).toLocaleDateString() : '—')}
+                    ${r.windows_analysed ? ' · heard in ' + r.windows_present + '/' + r.windows_analysed : ''}
+                    ${r.source === 'fused' ? ' · room + location' : r.source === 'acoustic' ? ' · room' : ''}
+                  </span>
+                </div>
+                <${Badge} status=${r.status} />
+              </div>`)}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- the app
+
+function StudentApp() {
+  const { profile } = useAuth();
+  const [screen, setScreen] = useState('home');
+  const { verify, result, setResult, run, cancel } = useCheckIn();
+  const [listen, setListen] = useState(null);      // last acoustic state
+  const [sessionId, setSessionId] = useState(null);
+
+  const startListening = useCallback(async id => {
+    if (!window.uvnAcoustic) return;
+    try {
+      await window.uvnAcoustic.startListening(id, s => setListen(s));
+    } catch (e) {
+      setListen(null);
+      alert('Microphone unavailable: ' + e.message);
+    }
+  }, []);
+
+  const stopListening = useCallback(() => {
+    if (window.uvnAcoustic) window.uvnAcoustic.stopListening();
+    setListen(null);
+  }, []);
+
+  useEffect(() => () => stopListening(), [stopListening]);
+
+  const doCheckIn = useCallback(async code => {
+    setScreen('home');
+    const id = await run(code);
+    if (id) {
+      setSessionId(id);
+      // listening is the main check, so try it without waiting to be asked;
+      // browsers that want a fresh gesture fall back to the button
+      try { await startListening(id); } catch (e) {}
+    }
+  }, [run, startListening]);
+
+  return html`
+    <${React.Fragment}>
+      ${screen === 'home' && html`
+        <${StudentHome} go=${setScreen} onCheckIn=${doCheckIn} />`}
+      ${screen === 'scan' && html`
+        <${ScanScreen} onBack=${() => setScreen('home')} onCode=${doCheckIn} />`}
+      ${screen === 'history' && html`
+        <${History} onBack=${() => setScreen('home')} />`}
+
+      ${verify && html`<${VerifyOverlay} ...${verify} onCancel=${cancel} />`}
+      <${ResultOverlay} result=${result} listening=${!!listen}
+        onClose=${() => setResult(null)}
+        onListen=${sessionId ? () => startListening(sessionId) : null} />
+      <${ListeningBar} state=${listen} onStop=${stopListening} />
+    <//>`;
+}
+
+function Root() {
+  const { loading, user, profile } = useAuth();
+  const [role, setRole] = useState(null);
+
+  if (loading) return html`<${Splash} />`;
+  if (!user) {
+    return role === 'student'
+      ? html`<${StudentAuth} onBack=${() => setRole(null)} />`
+      : html`<${RolePicker} onStudent=${() => setRole('student')} />`;
+  }
+  if (!profile) return html`<${FinishProfile} />`;
+  if (profile.role !== 'student') {
+    return html`
+      <div class="screen active auth-screen">
+        <div class="form-card">
+          <h3>Lecturer account</h3>
+          <p class="splash-sub">The lecturer screens are not part of this React
+            pass yet — open <b>univen.html</b> for those.</p>
+          <${Btn} kind="ghost" onClick=${() => api.signOut()}>Sign out<//>
+        </div>
+      </div>`;
+  }
+  return html`<${StudentApp} />`;
+}
+
+ReactDOM.createRoot(document.getElementById('root'))
+  .render(html`<${AuthProvider}><${Root} /><//>`);
+
+</script>
+</body>
+</html>
