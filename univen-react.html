@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 /* ===================================================================
    DESIGN TOKENS
@@ -770,6 +771,7 @@ padding-bottom:50px;
   .vf-sweep,.vf-check.run i,.qr-token-row .dot{animation:none;}
   .conf-fill,.vf-ring-fg{transition:none;}
 }
+
 </style>
 </head>
 <body>
@@ -782,8 +784,14 @@ padding-bottom:50px;
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
+/* =====================================================================
+   LOCATION ENGINE — GPS polygon containment and the check-in score.
+   The backup layer: it decides only when the room cannot.
+   ===================================================================== */
 /* =====================================================================
    LOCATION ENGINE — GPS polygon containment and the check-in score.
    Pure functions, shared unchanged with univen.html.
@@ -1094,6 +1102,7 @@ function scoreCheckIn(input){
     engine: 2
   };
 }
+
 </script>
 
 <script>
@@ -1971,15 +1980,20 @@ window.dispatchEvent(new Event('uvn-acoustic-ready'));
 
 <script>
 /* =====================================================================
-   UNIVEN ATTENDANCE — React components.
+   UNIVEN ATTENDANCE — React.
 
-   No build step: React and htm come from a CDN, and htm gives real
-   template syntax without JSX compilation. `html` below is React
-   .createElement with a tagged template in front of it, so everything
-   here is ordinary React - hooks, state, effects, the lot.
+   No build step: React 18 and htm load from a CDN. `html` is
+   React.createElement behind a tagged template, so this is ordinary
+   React — components, hooks, context — with template literals where JSX
+   would normally be.
 
-   The scoring engine above this (GPS geometry, scoreCheckIn) and the
-   acoustic bundle are plain functions, shared unchanged.
+   Above this script: the location engine (GPS polygon scoring) and the
+   acoustic layer (capture, landmark hashing, fusion). Both are plain
+   functions shared unchanged.
+
+   Attendance is decided by the room first: devices that heard the same
+   seconds cluster together, anchored to the lecturer's phone. The venue
+   polygon is the backup for when the room cannot decide.
    ===================================================================== */
 const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
 const html = htm.bind(React.createElement);
@@ -1987,206 +2001,369 @@ const html = htm.bind(React.createElement);
 const SUPABASE_URL = 'https://rbnnbmduwrvokhbkezyh.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ddn7Hew9PxMs0ozk7wP0XQ_ZePJsncq';
 
-/* Student numbers resolve to addresses on this domain, which is how a
-   student can sign in with a number instead of an email. The alternative -
-   looking the number up before authenticating - would mean an endpoint that
-   maps any student number to that person's email address, readable by
-   anyone. Not worth it. */
+/* A student can sign in with a number because numbers map onto addresses on
+   this domain. The alternative — looking the number up before signing in —
+   needs an endpoint that turns any student number into an email address for
+   anyone who asks. */
 const EMAIL_DOMAIN = 'mvula.univen.ac.za';
+const UNIVEN_CENTRE = [-22.9760, 30.4445];
+const TOKEN_ROTATE_MS = 30000;
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }
 });
-window.sb = sb;   // the acoustic bundle borrows this client
+window.sb = sb;                               // the acoustic layer borrows this client
+window.SUPABASE_REST = SUPABASE_URL + '/rest/v1/';
 
-const unwrap = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
+const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const uuid = () => crypto.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+const countWords = t => (t.trim().match(/\S+/g) || []).length;
+const parseNumbers = t => [...new Set(String(t).split(/[\s,;]+/).map(s => s.trim()).filter(s => /^\w{4,}$/.test(s)))];
+const fmtTime = t => t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+const fmtDate = t => t ? new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' }) : '—';
+const fmtWhen = t => t ? new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const codeOf = s => (s && ((s.meta && s.meta.moduleCode) || (s.aa_courses && s.aa_courses.code) || s.title)) || 'Class';
+const isOpen = s => s.status === 'open' && (!s.expires_at || new Date(s.expires_at) > new Date());
 
-// ---------------------------------------------------------------- data layer
+function downloadCsv(name, rows) {
+  const cell = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const body = rows.map(r => r.map(cell).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([body], { type: 'text/csv' }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+
+/** Why a Supabase call failed, in words a person can act on. */
+function friendly(e) {
+  // Browser device errors first: a refused microphone says "Permission
+  // denied", which would otherwise read as a database permission problem.
+  if (e && e.name === 'NotAllowedError') return 'Microphone access is blocked for this site — allow it in your browser settings.';
+  if (e && e.name === 'NotFoundError') return 'No microphone was found on this device.';
+  if (e && e.name === 'NotReadableError') return 'The microphone is in use by another app.';
+  if (e && e.code === 1 && 'PERMISSION_DENIED' in e) return 'Location access is blocked for this site — allow it in your browser settings.';
+  const m = (e && e.message) || String(e);
+  if (/denied geolocation|geolocation.*denied/i.test(m)) return 'Location access is blocked for this site — allow it in your browser settings.';
+  if (/cannot report its location/i.test(m)) return 'This device cannot report its location.';
+  if (/Invalid login credentials/i.test(m)) return 'Wrong student number, email or password.';
+  if (/Email not confirmed/i.test(m)) return 'Confirm the link in your email first.';
+  if (/User already registered/i.test(m)) return 'That email already has an account — log in instead.';
+  if (/student_number_key/i.test(m)) return 'That student number already has an account.';
+  if (/not enrolled/i.test(m)) return 'You are not on the class list for this session.';
+  if (/no student with that number/i.test(m)) return 'No account has that student number yet.';
+  if (/already checked in .* for this session/i.test(m)) return 'This phone has already checked someone else in to this session.';
+  if (/expired|has ended/i.test(m)) return 'This session is no longer accepting check-ins.';
+  if (/need at least two submissions/i.test(m)) return 'Only your phone has captured so far — matching needs other devices.';
+  if (/row-level security|permission denied|not your/i.test(m)) return 'You do not have permission to do that.';
+  if (/Failed to fetch|NetworkError/i.test(m)) return 'Cannot reach the server. Check your connection.';
+  return m;
+}
+
+// ===================================================================== data
+
+const SESSION_COLS = `id, course_id, lecturer_id, title, venue, venue_id, join_code, status,
+  started_at, ended_at, expires_at, lat, lng, radius_meters, venue_polygon, live_token,
+  reflection_min_words, meta, aa_courses ( code, title )`;
 
 const api = {
-  emailFor(idOrEmail) {
-    const v = idOrEmail.trim();
-    return v.includes('@') ? v : v + '@' + EMAIL_DOMAIN;
-  },
-
-  signIn: (idOrEmail, password) =>
-    sb.auth.signInWithPassword({ email: api.emailFor(idOrEmail), password })
-      .then(unwrap),
-
-  signUp: ({ studentNumber, name, email, password }) =>
-    sb.auth.signUp({
-      email, password,
-      options: { data: {
-        aa_display_name: name, aa_role: 'student', aa_student_number: studentNumber
-      } }
-    }).then(unwrap),
-
+  // ---- identity
+  emailFor: v => (v = v.trim(), v.includes('@') ? v : v + '@' + EMAIL_DOMAIN),
+  signIn: (id, password) => sb.auth.signInWithPassword({ email: api.emailFor(id), password }).then(ok),
+  signUp: ({ email, password, name, role, studentNumber }) => sb.auth.signUp({
+    email, password,
+    options: { data: { aa_display_name: name, aa_role: role,
+                       aa_student_number: role === 'student' ? studentNumber : '' } }
+  }).then(ok),
   signOut: () => sb.auth.signOut(),
+  setPassword: password => sb.auth.updateUser({ password }).then(ok),
+  profile: uid => sb.from('aa_profiles').select('*').eq('id', uid).maybeSingle().then(ok),
+  createProfile: row => sb.from('aa_profiles').insert(row).select().single().then(ok),
+  updateProfile: (uid, patch) => sb.from('aa_profiles').update(patch).eq('id', uid).select().single().then(ok),
 
-  profile: uid => sb.from('aa_profiles')
-    .select('id, role, display_name, student_number, email, photo_data, created_at')
-    .eq('id', uid).maybeSingle().then(unwrap),
-
-  createProfile: row => sb.from('aa_profiles').insert(row).select().single().then(unwrap),
-
-  enrolments: () => sb.from('aa_enrolments')
-    .select('course_id, aa_courses ( code, title )').then(unwrap),
-
-  openSessions: () => sb.from('aa_class_sessions')
-    .select(`id, title, venue, join_code, status, started_at, expires_at,
-             lat, lng, radius_meters, venue_polygon, live_token,
-             reflection_min_words, meta, aa_courses ( code, title )`)
-    .eq('status', 'open')
-    .order('started_at', { ascending: false }).then(unwrap),
-
-  session: id => sb.from('aa_class_sessions')
-    .select(`id, title, venue, join_code, status, started_at, expires_at,
-             lat, lng, radius_meters, venue_polygon, live_token,
-             reflection_min_words, meta, aa_courses ( code, title )`)
-    .eq('id', id).maybeSingle().then(unwrap),
-
-  peerCentroid: sessionId =>
-    sb.rpc('aa_peer_centroid', { p_session: sessionId }).then(unwrap),
-
-  checkIn: (sessionId, { status, gps, verification, deviceId, reflection, words }) =>
-    sb.rpc('aa_check_in', {
-      p_session: sessionId, p_status: status, p_gps: gps,
-      p_verification: verification, p_device: deviceId,
-      p_reflection: reflection || null, p_words: words || null
-    }).then(unwrap),
-
-  myAttendance: () => sb.from('aa_attendance')
-    .select(`status, source, confidence, windows_present, windows_analysed,
+  // ---- student
+  enrolments: () => sb.from('aa_enrolments').select('course_id, aa_courses ( code, title )').then(ok),
+  openSessions: () => sb.from('aa_class_sessions').select(SESSION_COLS)
+    .eq('status', 'open').order('started_at', { ascending: false }).limit(30).then(ok)
+    .then(rows => rows.filter(isOpen)),
+  session: id => sb.from('aa_class_sessions').select(SESSION_COLS).eq('id', id).maybeSingle().then(ok),
+  peerCentroid: id => sb.rpc('aa_peer_centroid', { p_session: id }).then(ok),
+  checkIn: (id, p) => sb.rpc('aa_check_in', {
+    p_session: id, p_status: p.status, p_gps: p.gps, p_verification: p.verification,
+    p_device: p.deviceId, p_reflection: p.reflection || null, p_words: p.words || null
+  }).then(ok),
+  myAttendance: uid => sb.from('aa_attendance')
+    .select(`class_session_id, status, source, confidence, windows_present, windows_analysed,
              checked_in_at, fused, verification,
-             aa_class_sessions ( title, venue, started_at ),
-             aa_courses ( code, title )`)
-    .order('updated_at', { ascending: false }).limit(40).then(unwrap)
+             aa_class_sessions ( title, venue, started_at, meta, aa_courses ( code ) )`)
+    .eq('student_id', uid).order('updated_at', { ascending: false }).limit(60).then(ok),
+  notifications: () => sb.from('aa_notifications').select('*')
+    .order('created_at', { ascending: false }).limit(40).then(ok),
+
+  // ---- lecturer: classes
+  myCourses: uid => sb.from('aa_courses').select('*').eq('lecturer_id', uid).order('code').then(ok),
+  createCourse: row => sb.from('aa_courses').insert(row).select().single().then(ok),
+  updateCourse: (id, patch) => sb.from('aa_courses').update(patch).eq('id', id).then(ok),
+  deleteCourse: id => sb.from('aa_courses').delete().eq('id', id).then(ok),
+  enrolled: courseId => sb.from('aa_enrolments')
+    .select('student_id, aa_profiles!aa_enrolments_student_id_fkey ( display_name, student_number )')
+    .eq('course_id', courseId).then(ok),
+  enrol: (courseId, number) => sb.rpc('aa_enrol_by_number', { p_course: courseId, p_number: number }).then(ok),
+  unenrol: (courseId, studentId) => sb.from('aa_enrolments').delete()
+    .eq('course_id', courseId).eq('student_id', studentId).then(ok),
+  report: courseId => sb.rpc('aa_course_report', { p_course: courseId }).then(ok),
+
+  // ---- lecturer: sessions
+  mySessions: uid => sb.from('aa_class_sessions').select(SESSION_COLS)
+    .eq('lecturer_id', uid).order('started_at', { ascending: false }).limit(60).then(ok),
+  async createSession(row) {
+    const created = await sb.from('aa_class_sessions').insert(row).select(SESSION_COLS).single().then(ok);
+    await sb.rpc('aa_seed_register', { p_session: created.id }).then(ok);
+    return created;
+  },
+  setToken: (id, value) => sb.from('aa_class_sessions')
+    .update({ live_token: { value, at: Date.now() } }).eq('id', id).then(ok),
+  extend: (id, minutes) => sb.from('aa_class_sessions')
+    .update({ expires_at: new Date(Date.now() + minutes * 60000).toISOString() }).eq('id', id).then(ok),
+  closeSession: id => sb.rpc('aa_close_class_session', { p_session: id }).then(ok),
+  register: id => sb.from('aa_attendance')
+    .select(`student_id, status, source, confidence, windows_present, windows_analysed,
+             checked_in_at, gps, verification, fused, reflection, override_note, overridden_at,
+             aa_profiles!aa_attendance_student_id_fkey ( display_name, student_number )`)
+    .eq('class_session_id', id).then(ok),
+  checkedInCounts: ids => ids.length
+    ? sb.from('aa_attendance').select('class_session_id, checked_in_at, status')
+        .in('class_session_id', ids).then(ok)
+    : Promise.resolve([]),
+  override: (sid, stu, status, note) => sb.rpc('aa_override_attendance',
+    { p_session: sid, p_student: stu, p_status: status, p_note: note || null }).then(ok),
+  submissionCount: w => sb.rpc('aa_window_submission_count', { p_window: w }).then(ok),
+
+  // ---- lecturer: venues, templates, updates
+  venues: () => sb.from('aa_venues').select('*').order('name').then(ok),
+  createVenue: row => sb.from('aa_venues').insert(row).select().single().then(ok),
+  deleteVenue: id => sb.from('aa_venues').delete().eq('id', id).then(ok),
+  templates: uid => sb.from('aa_timetables').select('*').eq('lecturer_id', uid)
+    .order('created_at', { ascending: false }).then(ok),
+  saveTemplate: row => sb.from('aa_timetables').insert(row).select().single().then(ok),
+  deleteTemplate: id => sb.from('aa_timetables').delete().eq('id', id).then(ok),
+  postUpdate: row => sb.from('aa_notifications').insert(row).select().single().then(ok),
+  myUpdates: uid => sb.from('aa_notifications').select('*').eq('posted_by', uid)
+    .order('created_at', { ascending: false }).limit(20).then(ok),
+  deleteUpdate: id => sb.from('aa_notifications').delete().eq('id', id).then(ok)
 };
 
-/** A session row, shaped the way the scoring engine expects it. */
-const toEngineSession = s => ({
+/** A session row in the shape the location engine reads. */
+const engineSession = s => ({
   lat: s.lat, lng: s.lng,
   radiusMeters: s.radius_meters || DEFAULT_RADIUS_METERS,
   venuePolygon: s.venue_polygon,
-  venueName: (s.meta && s.meta.venueName) || s.venue,
-  moduleCode: (s.meta && s.meta.moduleCode) || (s.aa_courses && s.aa_courses.code) || '',
   liveToken: s.live_token,
-  expiresAt: s.expires_at ? new Date(s.expires_at).getTime() : null,
-  reflectionMinWords: s.reflection_min_words
+  expiresAt: s.expires_at ? new Date(s.expires_at).getTime() : null
 });
 
-// ---------------------------------------------------------------- auth context
+/** Run an async loader, and reload on demand. */
+function useLoad(fn, deps) {
+  const [state, set] = useState({ data: null, error: null, loading: true });
+  const run = useCallback(async () => {
+    set(s => ({ ...s, loading: true }));
+    try { set({ data: await fn(), error: null, loading: false }); }
+    catch (e) { set({ data: null, error: friendly(e), loading: false }); }
+  }, deps);                                            // eslint-disable-line
+  useEffect(() => { run(); }, [run]);
+  return { ...state, reload: run };
+}
 
-const Auth = createContext(null);
-const useAuth = () => useContext(Auth);
+// ===================================================================== contexts
+
+const ToastCtx = createContext(() => {});
+const useToast = () => useContext(ToastCtx);
+
+function ToastProvider({ children }) {
+  const [t, setT] = useState(null);
+  const timer = useRef(null);
+  const show = useCallback((text, kind = '') => {
+    setT({ text, kind });
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setT(null), 2800);
+  }, []);
+  return html`<${ToastCtx.Provider} value=${show}>
+    ${children}
+    <div id="toast" class=${t ? 'show ' + (t.kind || '') : ''}>${t ? t.text : ''}</div>
+  <//>`;
+}
+
+const AuthCtx = createContext(null);
+const useAuth = () => useContext(AuthCtx);
 
 function AuthProvider({ children }) {
-  const [state, setState] = useState({ loading: true, user: null, profile: null });
+  const [s, setS] = useState({ loading: true, user: null, profile: null });
 
   const load = useCallback(async session => {
-    if (!session) { setState({ loading: false, user: null, profile: null }); return; }
+    if (!session) { setS({ loading: false, user: null, profile: null }); return; }
     let profile = null;
     try { profile = await api.profile(session.user.id); } catch (e) {}
-    setState({ loading: false, user: session.user, profile });
+    setS({ loading: false, user: session.user, profile });
   }, []);
 
   useEffect(() => {
     sb.auth.getSession().then(r => load(r.data.session));
-    const { data } = sb.auth.onAuthStateChange((_e, s) => load(s));
+    const { data } = sb.auth.onAuthStateChange((event, session) => {
+      // token refreshes fire here too; only reload on real identity changes
+      if (event === 'TOKEN_REFRESHED') return;
+      load(session);
+    });
     return () => data.subscription.unsubscribe();
   }, [load]);
 
   const value = useMemo(() => ({
-    ...state,
-    refresh: async () => {
-      const r = await sb.auth.getSession();
-      await load(r.data.session);
-    },
-    signOut: async () => { await api.signOut(); }
-  }), [state, load]);
+    ...s,
+    refresh: async () => load((await sb.auth.getSession()).data.session),
+    setProfile: profile => setS(x => ({ ...x, profile })),
+    signOut: () => api.signOut()
+  }), [s, load]);
 
-  return html`<${Auth.Provider} value=${value}>${children}<//>`;
+  return html`<${AuthCtx.Provider} value=${value}>${children}<//>`;
 }
 
-// ---------------------------------------------------------------- small pieces
+// ===================================================================== small pieces
 
 const Icon = ({ name, ...rest }) => html`<i class=${'fas ' + name} ...${rest} />`;
 
-function Btn({ kind = 'primary', small, children, ...rest }) {
-  const cls = ['btn', 'btn-' + kind, small ? 'btn-sm' : ''].filter(Boolean).join(' ');
-  return html`<button class=${cls} ...${rest}>${children}</button>`;
+function Btn({ kind = 'primary', small, busy, children, ...rest }) {
+  const cls = ['btn', 'btn-' + kind, small && 'btn-sm'].filter(Boolean).join(' ');
+  return html`<button class=${cls} disabled=${busy || rest.disabled} ...${rest}>
+    ${busy ? html`<${Icon} name="fa-circle-notch fa-spin" />` : null} ${children}
+  </button>`;
 }
 
-function Field({ label, hint, ...input }) {
+function Field({ label, hint, icon, ...input }) {
   return html`
     <div class="field">
-      <label>${label}${hint && html`<span style=${{'fontWeight': '400', 'color': 'var(--text-faint)'}}> ${hint}</span>`}</label>
+      ${label ? html`<label>${label}${hint ? html`<span style=${{ fontWeight: 400, color: 'var(--text-faint)' }}> ${hint}</span>` : null}</label>` : null}
       <div class="input-wrap">
-        ${input.icon && html`<${Icon} name=${input.icon} />`}
-        <input class="input" ...${{ ...input, icon: undefined }} />
+        ${icon ? html`<${Icon} name=${icon} />` : null}
+        <input class="input" ...${input} />
       </div>
     </div>`;
 }
 
-function Status({ msg }) {
-  if (!msg) return null;
-  return html`<div class=${'status-msg ' + (msg.kind || '')}>${msg.text}</div>`;
+function Select({ label, options, ...rest }) {
+  return html`
+    <div class="field">
+      ${label ? html`<label>${label}</label>` : null}
+      <select class="select input" ...${rest}>
+        ${options.map(o => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+      </select>
+    </div>`;
 }
 
-const Badge = ({ status }) => {
-  const label = { present: 'Present', 'pending-review': 'Pending review',
-                  review: 'Pending review', rejected: 'Rejected',
-                  absent: 'Absent', excused: 'Excused',
-                  not_recorded: 'Not recorded' }[status] || status;
-  const cls = status === 'present' ? 'ok'
-            : status === 'rejected' || status === 'absent' ? 'rejected' : '';
-  return html`<span class=${'badge ' + cls}>${label}</span>`;
+function TextArea({ label, ...rest }) {
+  return html`
+    <div class="field">
+      ${label ? html`<label>${label}</label>` : null}
+      <textarea class="input" style=${{ minHeight: '110px', padding: '12px', resize: 'vertical' }} ...${rest} />
+    </div>`;
+}
+
+/* The stylesheet only displays a status message once it also carries
+   `show`; without it every error rendered and stayed invisible. */
+const Status = ({ msg }) => msg
+  ? html`<div class=${'status-msg show ' + (msg.kind || 'info')}>${msg.text}</div>`
+  : null;
+
+function Toggle({ on, onChange }) {
+  return html`<div class=${'toggle' + (on ? ' on' : '')} onClick=${() => onChange(!on)}><div class="knob" /></div>`;
+}
+
+const STATUS_LABEL = {
+  present: 'Present', review: 'Pending review', 'pending-review': 'Pending review',
+  absent: 'Absent', rejected: 'Rejected', excused: 'Excused', not_recorded: 'Not recorded'
 };
+const Badge = ({ status }) => html`<span class=${'badge ' + (
+  status === 'present' ? 'present' : status === 'absent' ? 'absent'
+  : status === 'not_recorded' ? '' : 'late')}>${STATUS_LABEL[status] || status}</span>`;
 
-// ---------------------------------------------------------------- splash / role
+function Topbar({ title, onBack, right }) {
+  return html`
+    <div class="topbar">
+      ${onBack ? html`<button class="icon-btn" onClick=${onBack}><${Icon} name="fa-arrow-left" /></button>`
+               : html`<span style=${{ width: '38px' }} />`}
+      <h2>${title}</h2>
+      ${right || html`<span style=${{ width: '38px' }} />`}
+    </div>`;
+}
 
-const Splash = () => html`
-  <div class="screen active auth-screen">
-    <div class="splash-crest"><${Icon} name="fa-graduation-cap" /></div>
-    <div class="splash-title">UNIVEN Attendance</div>
-    <div class="splash-sub">Checking your session…</div>
-    <div class="splash-loader"><div class="spin" /></div>
-  </div>`;
+const Empty = ({ icon, title, text }) => html`
+  <div class="empty"><${Icon} name=${icon} /><h4>${title}</h4>${text ? html`<p>${text}</p>` : null}</div>`;
 
-const RolePicker = ({ onStudent }) => html`
-  <div class="screen active auth-screen">
-    <div class="auth-hero">
-      <div class="splash-title">Your Campus.<br />Your Journey.</div>
-    </div>
-    <div class="role-cards">
-      <div class="role-card" onClick=${onStudent}>
-        <div class="avatar"><${Icon} name="fa-graduation-cap" /></div>
-        <div>
-          <h4>I'm a Student</h4>
-          <span>Check in to class & track attendance</span>
-        </div>
-        <${Icon} name="fa-chevron-right" />
+/* body copy under headings - the splash style is uppercase, this is not */
+const HINT = { fontSize: '.78rem', color: 'var(--text-soft)', lineHeight: 1.55, margin: '6px 0 12px', textTransform: 'none' };
+
+const Loading = () => html`<div class="empty"><${Icon} name="fa-circle-notch fa-spin" /><p>Loading…</p></div>`;
+
+function BottomNav({ items, current, onGo, fab }) {
+  return html`
+    <div class="bottom-nav">
+      ${items.map((it, i) => html`
+        ${fab && i === Math.floor(items.length / 2) ? html`
+          <div key="fab" class="nav-fab" onClick=${fab.onClick}><${Icon} name=${fab.icon} /></div>` : null}
+        <div key=${it.id} class=${'nav-item' + (current === it.id ? ' active' : '')} onClick=${() => onGo(it.id)}>
+          <${Icon} name=${it.icon} />${it.label}
+        </div>`)}
+    </div>`;
+}
+
+function Modal({ children }) {
+  return html`<div class="scan-result-overlay"><div class="result-card">${children}</div></div>`;
+}
+
+/** The confidence bar under a check-in result. */
+function Confidence({ v }) {
+  if (!v || typeof v.score !== 'number') return null;
+  const pct = Math.round(v.score * 100);
+  const cls = v.score >= 0.72 ? 'ok' : v.score >= 0.42 ? 'warn' : 'bad';
+  return html`
+    <div class="conf-wrap">
+      <div class="conf-head"><span>Location confidence</span><span class=${'conf-pill ' + cls}>${pct}%</span></div>
+      <div class="conf-track"><div class=${'conf-fill ' + cls} style=${{ width: pct + '%' }} /></div>
+      ${v.reasons && v.reasons.length ? html`<div class="rv-why">${v.reasons.slice(0, 3).join(' · ')}</div>` : null}
+    </div>`;
+}
+
+// ===================================================================== sign in
+
+function RolePicker({ onPick }) {
+  return html`
+    <div class="screen active auth-screen">
+      <div class="auth-hero">
+        <div class="splash-title">Your Campus.<br />Your Journey.</div>
+        <div class="splash-sub">Attendance proved by the room you are in.</div>
       </div>
-      <div class="role-card" style=${{'opacity': '.55'}}>
-        <div class="avatar"><${Icon} name="fa-chalkboard-user" /></div>
-        <div>
-          <h4>I'm a Lecturer</h4>
-          <span>Not part of this pass — use univen.html</span>
+      <div class="role-cards">
+        <div class="role-card" onClick=${() => onPick('student')}>
+          <div class="avatar"><${Icon} name="fa-graduation-cap" /></div>
+          <div><h4>I'm a Student</h4><span>Check in to class & track attendance</span></div>
+          <${Icon} name="fa-chevron-right" />
+        </div>
+        <div class="role-card" onClick=${() => onPick('lecturer')}>
+          <div class="avatar"><${Icon} name="fa-chalkboard-user" /></div>
+          <div><h4>I'm a Lecturer</h4><span>Create sessions & monitor attendance</span></div>
+          <${Icon} name="fa-chevron-right" />
         </div>
       </div>
-    </div>
-  </div>`;
+    </div>`;
+}
 
-// ---------------------------------------------------------------- auth screen
-
-function StudentAuth({ onBack }) {
+function AuthScreen({ role, onBack }) {
   const { refresh } = useAuth();
   const [tab, setTab] = useState('login');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [f, setF] = useState({ id: '', pwd: '', number: '', name: '', email: '', p1: '', p2: '' });
   const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
+  const student = role === 'student';
 
   async function login() {
     if (!f.id || !f.pwd) return setMsg({ kind: 'error', text: 'Enter your details.' });
@@ -2197,17 +2374,15 @@ function StudentAuth({ onBack }) {
   }
 
   async function register() {
-    if (!f.number || !f.name || !f.email)
+    if (!f.name || !f.email || (student && !f.number))
       return setMsg({ kind: 'error', text: 'Please fill in all fields.' });
-    if (f.p1.length < 8)
-      return setMsg({ kind: 'error', text: 'Your password needs at least 8 characters.' });
-    if (f.p1 !== f.p2)
-      return setMsg({ kind: 'error', text: 'The two passwords do not match.' });
+    if (f.p1.length < 8) return setMsg({ kind: 'error', text: 'Your password needs at least 8 characters.' });
+    if (f.p1 !== f.p2) return setMsg({ kind: 'error', text: 'The two passwords do not match.' });
     setBusy(true); setMsg(null);
     try {
-      const r = await api.signUp({ studentNumber: f.number, name: f.name,
-                                   email: f.email, password: f.p1 });
-      if (!r.session) setMsg({ kind: 'info', text: 'Account created. Confirm the link in your email, then log in.' });
+      const r = await api.signUp({ email: f.email.trim(), password: f.p1, name: f.name.trim(),
+                                   role, studentNumber: f.number.trim() });
+      if (!r.session) setMsg({ kind: 'success', text: 'Account created. Confirm the link in your email, then log in.' });
       else await refresh();
     } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
     finally { setBusy(false); }
@@ -2215,93 +2390,178 @@ function StudentAuth({ onBack }) {
 
   return html`
     <div class="screen active auth-screen">
-      <div class="topbar">
-        <button class="icon-btn" onClick=${onBack}><${Icon} name="fa-arrow-left" /></button>
-        <h3>Student Account</h3>
-      </div>
+      <${Topbar} title=${student ? 'Student Account' : 'Lecturer Account'} onBack=${onBack} />
       <div class="form-card">
         <div class="tab-switch">
-          <button class=${tab === 'login' ? 'active' : ''} onClick=${() => setTab('login')}>Log In</button>
-          <button class=${tab === 'register' ? 'active' : ''} onClick=${() => setTab('register')}>Register</button>
+          <button class=${tab === 'login' ? 'active' : ''} onClick=${() => { setTab('login'); setMsg(null); }}>Log In</button>
+          <button class=${tab === 'register' ? 'active' : ''} onClick=${() => { setTab('register'); setMsg(null); }}>Register</button>
         </div>
-
         ${tab === 'login' ? html`
-          <${Field} label="Student Number or Email" icon="fa-id-card"
-            value=${f.id} onChange=${set('id')} placeholder=${'e.g. 21012345 or you@' + EMAIL_DOMAIN} />
-          <${Field} label="Password" icon="fa-lock" type="password"
-            value=${f.pwd} onChange=${set('pwd')} placeholder="••••••••" />
-          <${Btn} onClick=${login} disabled=${busy}>
-            <${Icon} name="fa-arrow-right-to-bracket" /> ${busy ? 'Signing in…' : 'Log In'}
-          <//>
+          <${Field} label=${student ? 'Student Number or Email' : 'Email'} icon="fa-id-card"
+            value=${f.id} onChange=${set('id')}
+            placeholder=${student ? 'e.g. 21012345' : 'you@univen.ac.za'} />
+          <${Field} label="Password" icon="fa-lock" type="password" value=${f.pwd} onChange=${set('pwd')}
+            onKeyDown=${e => e.key === 'Enter' && login()} />
+          <${Btn} onClick=${login} busy=${busy}><${Icon} name="fa-arrow-right-to-bracket" /> Log In<//>
         ` : html`
-          <${Field} label="Student Number" icon="fa-hashtag"
-            value=${f.number} onChange=${set('number')} placeholder="e.g. 21012345" />
-          <${Field} label="Full Name" icon="fa-user"
-            value=${f.name} onChange=${set('name')} placeholder="e.g. Rendani Mulaudzi" />
-          <${Field} label="Email Address" icon="fa-envelope" type="email"
-            value=${f.email} onChange=${set('email')} placeholder=${'you@' + EMAIL_DOMAIN} />
-          <${Field} label="Password" icon="fa-lock" type="password"
-            value=${f.p1} onChange=${set('p1')} placeholder="At least 8 characters" />
-          <${Field} label="Confirm Password" icon="fa-lock" type="password"
-            value=${f.p2} onChange=${set('p2')} placeholder="Repeat your password" />
-          <${Btn} kind="gold" onClick=${register} disabled=${busy}>
-            <${Icon} name="fa-user-plus" /> ${busy ? 'Creating…' : 'Create Account'}
-          <//>
+          ${student ? html`<${Field} label="Student Number" icon="fa-hashtag" value=${f.number} onChange=${set('number')} placeholder="e.g. 21012345" />` : null}
+          <${Field} label="Full Name" icon="fa-user" value=${f.name} onChange=${set('name')} />
+          <${Field} label="Email Address" icon="fa-envelope" type="email" value=${f.email} onChange=${set('email')}
+            placeholder=${student ? 'you@' + EMAIL_DOMAIN : 'you@univen.ac.za'} />
+          <${Field} label="Password" icon="fa-lock" type="password" value=${f.p1} onChange=${set('p1')} placeholder="At least 8 characters" />
+          <${Field} label="Confirm Password" icon="fa-lock" type="password" value=${f.p2} onChange=${set('p2')} />
+          <${Btn} kind="gold" onClick=${register} busy=${busy}><${Icon} name="fa-user-plus" /> Create Account<//>
         `}
         <${Status} msg=${msg} />
       </div>
     </div>`;
 }
 
-function friendly(e) {
-  const m = e.message || String(e);
-  if (/Invalid login credentials/i.test(m)) return 'Wrong student number, email or password.';
-  if (/Email not confirmed/i.test(m)) return 'Confirm the link in your email first.';
-  if (/User already registered/i.test(m)) return 'That email already has an account — log in instead.';
-  if (/student_number_key/i.test(m)) return 'That student number already has an account.';
-  if (/Failed to fetch/i.test(m)) return 'Cannot reach the server. Check your connection.';
-  return m;
-}
-
-// ---------------------------------------------------------------- profile gap
-
-function FinishProfile() {
-  const { user, refresh } = useAuth();
-  const [f, setF] = useState({ name: '', number: '' });
+function FinishProfile({ defaultRole = 'student' }) {
+  const { user, setProfile, signOut } = useAuth();
+  const [f, setF] = useState({ name: '', number: '', role: defaultRole });
   const [msg, setMsg] = useState(null);
   const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
-
   return html`
     <div class="screen active auth-screen">
       <div class="form-card">
         <h3>Finish your profile</h3>
-        <p class="splash-sub">Signed in as ${user.email}, but this account has no
-          attendance profile yet.</p>
+        <p style=${HINT}>Signed in as <b>${user.email}</b>, but this account has no attendance profile yet.</p>
+        <${Select} label="I am a" value=${f.role} onChange=${set('role')}
+          options=${[{ value: 'student', label: 'Student' }, { value: 'lecturer', label: 'Lecturer' }]} />
         <${Field} label="Full Name" icon="fa-user" value=${f.name} onChange=${set('name')} />
-        <${Field} label="Student Number" icon="fa-hashtag" value=${f.number} onChange=${set('number')} />
+        ${f.role === 'student' ? html`<${Field} label="Student Number" icon="fa-hashtag" value=${f.number} onChange=${set('number')} />` : null}
         <${Btn} onClick=${async () => {
-          if (!f.name || !f.number) return setMsg({ kind: 'error', text: 'Both fields are required.' });
+          if (!f.name || (f.role === 'student' && !f.number)) return setMsg({ kind: 'error', text: 'Fill in every field.' });
           try {
-            await api.createProfile({ id: user.id, role: 'student',
-              display_name: f.name, student_number: f.number, email: user.email });
-            await refresh();
+            setProfile(await api.createProfile({ id: user.id, role: f.role, display_name: f.name.trim(),
+              student_number: f.role === 'student' ? f.number.trim() : null, email: user.email }));
           } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
         }}>Save and continue<//>
+        <${Btn} kind="ghost" onClick=${signOut}>Not the right account? Sign out<//>
         <${Status} msg=${msg} />
       </div>
     </div>`;
 }
 
-// ---------------------------------------------------------------- verify overlay
+// ===================================================================== account screens (shared)
 
-/** The five-step live check, with the ring the original drew. */
+function ChangePassword({ onBack }) {
+  const toast = useToast();
+  const [p, setP] = useState({ a: '', b: '' });
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Change Password" onBack=${onBack} />
+      <div class="form-card">
+        <${Field} label="New Password" type="password" icon="fa-lock" value=${p.a} onChange=${e => setP({ ...p, a: e.target.value })} />
+        <${Field} label="Confirm" type="password" icon="fa-lock" value=${p.b} onChange=${e => setP({ ...p, b: e.target.value })} />
+        <${Btn} busy=${busy} onClick=${async () => {
+          if (p.a.length < 8) return setMsg({ kind: 'error', text: 'At least 8 characters.' });
+          if (p.a !== p.b) return setMsg({ kind: 'error', text: 'The passwords do not match.' });
+          setBusy(true);
+          try { await api.setPassword(p.a); toast('Password changed', 'success'); onBack(); }
+          catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+          finally { setBusy(false); }
+        }}>Save<//>
+        <${Status} msg=${msg} />
+      </div>
+    </div>`;
+}
+
+function EditName({ onBack }) {
+  const { profile, setProfile } = useAuth();
+  const toast = useToast();
+  const [name, setName] = useState(profile.display_name || '');
+  const [msg, setMsg] = useState(null);
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Edit Profile" onBack=${onBack} />
+      <div class="form-card">
+        <${Field} label="Full Name" icon="fa-user" value=${name} onChange=${e => setName(e.target.value)} />
+        ${profile.student_number ? html`<${Field} label="Student Number" hint="(fixed)" icon="fa-hashtag" value=${profile.student_number} disabled />` : null}
+        <${Btn} onClick=${async () => {
+          if (!name.trim()) return setMsg({ kind: 'error', text: 'Enter your name.' });
+          try { setProfile(await api.updateProfile(profile.id, { display_name: name.trim() })); toast('Saved', 'success'); onBack(); }
+          catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+        }}><${Icon} name="fa-floppy-disk" /> Save Changes<//>
+        <${Status} msg=${msg} />
+      </div>
+    </div>`;
+}
+
+function useDarkMode() {
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem('uvn_dark') === '1'; } catch (e) { return false; } });
+  useEffect(() => {
+    document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
+    try { localStorage.setItem('uvn_dark', dark ? '1' : '0'); } catch (e) {}
+  }, [dark]);
+  return [dark, setDark];
+}
+
+function ProfileScreen({ go, extraRows }) {
+  const { profile, user, signOut } = useAuth();
+  const [dark, setDark] = useDarkMode();
+  const initials = (profile.display_name || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Profile" />
+      <div class="profile-hero">
+        <div class="avatar">${profile.photo_data ? html`<img src=${profile.photo_data} style=${{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />` : initials}</div>
+        <h2>${profile.display_name}</h2>
+        <p>${profile.student_number ? profile.student_number + ' · ' : ''}${user.email}</p>
+      </div>
+      <div class="settings-list">
+        ${extraRows}
+        <div class="settings-row" onClick=${() => go('edit')}><${Icon} name="fa-user-pen" /><span>Edit Profile</span><${Icon} name="fa-chevron-right chev" /></div>
+        <div class="settings-row" onClick=${() => go('password')}><${Icon} name="fa-key" /><span>Change Password</span><${Icon} name="fa-chevron-right chev" /></div>
+        <div class="settings-row"><${Icon} name="fa-moon" /><span>Dark Mode</span><${Toggle} on=${dark} onChange=${setDark} /></div>
+      </div>
+      <div style=${{ margin: '20px 18px' }}>
+        <${Btn} kind="danger" onClick=${signOut}><${Icon} name="fa-arrow-right-from-bracket" /> Log Out<//>
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+function Notifications({ onBack }) {
+  const { data, loading, error } = useLoad(api.notifications, []);
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Updates" onBack=${onBack} />
+      <div class="page-pad">
+        ${loading ? html`<${Loading} />` : error ? html`<${Status} msg=${{ kind: 'error', text: error }} />`
+          : !data.length ? html`<${Empty} icon="fa-bell-slash" title="No updates yet" />`
+          : data.map(n => html`
+            <div key=${n.id} class="notif-item">
+              <div class="n-icon"><${Icon} name=${n.meta && n.meta.isOfficial ? 'fa-building-columns' : 'fa-bullhorn'} /></div>
+              <div>
+                <h4>${n.title}</h4>
+                <p>${n.body}</p>
+                <span class="time">${(n.meta && n.meta.postedBy) ? n.meta.postedBy + ' · ' : ''}${fmtWhen(n.created_at)}</span>
+              </div>
+            </div>`)}
+      </div>
+    </div>`;
+}
+
+// ===================================================================== check-in
+
+const VF_STEPS = [
+  { id: 'signal', label: 'Reading your location' },
+  { id: 'boundary', label: 'Matching the venue outline' },
+  { id: 'stability', label: 'Checking reading stability' },
+  { id: 'room', label: 'Comparing with the room' },
+  { id: 'device', label: 'Confirming device and code' }
+];
+
 function VerifyOverlay({ steps, readings, unit, onCancel }) {
   const RING = 408;
   const done = steps.filter(s => s.state).length;
-  const offset = RING - Math.max(0, Math.min(1, done / steps.length)) * RING;
-  const ico = s => s === 'ok' ? 'fa-circle-check'
-                 : s === 'warn' ? 'fa-triangle-exclamation'
-                 : s === 'bad' ? 'fa-circle-xmark' : 'fa-circle-notch';
+  const offset = RING - (done / steps.length) * RING;
+  const ico = s => s === 'ok' ? 'fa-circle-check' : s === 'warn' ? 'fa-triangle-exclamation'
+                 : s === 'bad' ? 'fa-circle-xmark' : 'fa-circle-notch fa-spin';
   return html`
     <div class="scan-result-overlay">
       <div class="result-card verify-card">
@@ -2309,22 +2569,16 @@ function VerifyOverlay({ steps, readings, unit, onCancel }) {
           <div class="vf-sweep" />
           <svg viewBox="0 0 150 150" aria-hidden="true">
             <circle class="vf-ring-bg" cx="75" cy="75" r="65" />
-            <circle class="vf-ring-fg" cx="75" cy="75" r="65"
-              style=${{ strokeDashoffset: String(offset) }} />
+            <circle class="vf-ring-fg" cx="75" cy="75" r="65" style=${{ strokeDashoffset: String(offset) }} />
           </svg>
-          <div class="vf-core">
-            <div class="n">${readings}</div>
-            <div class="u">${unit}</div>
-          </div>
+          <div class="vf-core"><div class="n">${readings}</div><div class="u">${unit}</div></div>
         </div>
         <h3>Verifying your check-in</h3>
         <p>Stay where you are for a few seconds.</p>
         <div class="vf-checks">
           ${steps.map(s => html`
             <div key=${s.id} class=${'vf-check ' + (s.state || '')}>
-              <${Icon} name=${ico(s.state)} />
-              <span>${s.label}</span>
-              <span class="val">${s.value || ''}</span>
+              <${Icon} name=${ico(s.state)} /><span>${s.label}</span><span class="val">${s.value || ''}</span>
             </div>`)}
         </div>
         <${Btn} kind="ghost" small onClick=${onCancel}>Cancel<//>
@@ -2332,63 +2586,167 @@ function VerifyOverlay({ steps, readings, unit, onCancel }) {
     </div>`;
 }
 
-// ---------------------------------------------------------------- result card
+function ReflectionModal({ req, onSubmit, onCancel }) {
+  const [text, setText] = useState('');
+  const n = countWords(text);
+  return html`<${Modal}>
+    <div class="result-icon ok"><${Icon} name="fa-pen-to-square" /></div>
+    <h3>A short reflection</h3>
+    <p>${req.prompt || 'Your lecturer asks for a few sentences about today’s class.'}</p>
+    <${TextArea} value=${text} onChange=${e => setText(e.target.value)} placeholder="Write here…" />
+    <p style=${{ fontSize: '.75rem', color: n >= req.minWords ? 'var(--success)' : 'var(--text-faint)' }}>
+      ${n} of ${req.minWords} words</p>
+    <${Btn} disabled=${n < req.minWords} onClick=${() => onSubmit(text)}>Submit and check in<//>
+    <${Btn} kind="ghost" onClick=${onCancel}>Cancel<//>
+  <//>`;
+}
 
-function ResultOverlay({ result, onClose, onListen, listening }) {
-  if (!result) return null;
-  const { kind, title, text, verification } = result;
-  const icon = kind === 'ok' ? 'fa-circle-check'
-             : kind === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-xmark';
+/**
+ * The whole check-in as one hook: find the session, sample GPS, score it,
+ * ask for a reflection if the lecturer wants one, then commit through
+ * aa_check_in. The polygon is the backup layer here — a weak fix goes on at
+ * review for the room to settle; only a tampered feed is refused.
+ */
+function useCheckIn() {
+  const { profile } = useAuth();
+  const [verify, setVerify] = useState(null);
+  const [result, setResult] = useState(null);
+  const [reflection, setReflection] = useState(null);
+  const cancelled = useRef(false);
+
+  const run = useCallback(async rawCode => {
+    cancelled.current = false;
+    const [idPart, tokenPart] = String(rawCode).trim().split('~');
+    const sessionId = idPart.trim();
+    const token = tokenPart ? tokenPart.trim() : null;
+
+    let steps = VF_STEPS.map(s => ({ ...s, state: null, value: '' }));
+    let dial = { readings: 0, unit: 'readings' };
+    const paint = () => setVerify({ steps, ...dial });
+    const mark = (id, state, value) => { steps = steps.map(s => s.id === id ? { ...s, state, value } : s); paint(); };
+    paint();
+
+    try {
+      if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error('That is not a session code. Scan the QR on your lecturer’s screen.');
+      const row = await api.session(sessionId);
+      if (!row) throw new Error('No open session matches that code — or you are not on its class list.');
+      if (!isOpen(row)) throw new Error('This session is no longer accepting check-ins.');
+      const session = engineSession(row);
+
+      const samples = await collectGpsSamples(list => { dial = { readings: list.length, unit: 'readings' }; paint(); });
+      if (cancelled.current) { setVerify(null); return null; }
+      const fix = robustFix(samples);
+      dial = { readings: Math.round(fix.accuracy), unit: 'metre accuracy' };
+      mark('signal', fix.accuracy <= 35 ? 'ok' : 'warn', samples.length + ' · ±' + Math.round(fix.accuracy) + 'm');
+
+      let peerAgg = null;
+      try { peerAgg = await api.peerCentroid(sessionId); } catch (e) {}
+
+      const verification = scoreCheckIn({ fix, samples, session, peerAgg, scannedToken: token,
+                                          studentNumber: profile.student_number });
+      const f = verification.factors;
+      await sleep(220);
+      mark('boundary', f.containment >= 0.7 ? 'ok' : f.containment >= 0.4 ? 'warn' : 'bad', f.distance <= 0 ? 'inside' : f.distance + 'm out');
+      await sleep(180);
+      mark('stability', f.agreement >= 0.7 ? 'ok' : f.agreement >= 0.4 ? 'warn' : 'bad', Math.round(f.agreement * 100) + '% agree');
+      await sleep(180);
+      mark('room', !f.consensusPeers ? 'warn' : f.consensusScore >= 0.6 ? 'ok' : 'bad', f.consensusPeers ? f.consensusDistance + 'm off' : 'first in');
+      await sleep(180);
+      mark('device', f.integrity >= 0.9 ? 'ok' : f.integrity >= 0.5 ? 'warn' : 'bad', f.presence);
+      await sleep(380);
+      setVerify(null);
+      if (cancelled.current) return null;
+
+      if ((verification.flags || []).some(x => x.code === 'frozen' || x.code === 'teleport')) {
+        setResult({ kind: 'fail', title: 'Check-in not accepted', verification,
+          text: 'These location readings look artificial rather than weak. Turn off any mock-location app and try again.' });
+        return null;
+      }
+
+      let reflectionText = null;
+      if (row.reflection_min_words) {
+        reflectionText = await new Promise(resolve => setReflection({
+          minWords: row.reflection_min_words, prompt: row.meta && row.meta.reflectionPrompt, resolve }));
+        setReflection(null);
+        if (reflectionText === null) return null;
+      }
+
+      const res = await api.checkIn(sessionId, {
+        status: verification.tier === 'verified' ? 'present' : 'review',
+        gps: { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy },
+        verification, deviceId: getDeviceId(),
+        reflection: reflectionText, words: reflectionText ? countWords(reflectionText) : null
+      });
+      if (res && res.committed === false) {
+        setResult({ kind: 'warn', title: 'Already checked in', text: 'You are already on the register for this session.', sessionId });
+        return sessionId;
+      }
+
+      const where = row.venue ? ' at ' + row.venue : '';
+      setResult(verification.tier === 'verified'
+        ? { kind: 'ok', title: 'Checked in', verification, sessionId,
+            text: 'You’re on the register for ' + codeOf(row) + where + '. Keep this page open so the room can confirm it.' }
+        : { kind: 'warn', title: 'On the register — pending', verification, sessionId,
+            text: 'The location fix was weak, which is normal indoors. Keep this page open: when your lecturer opens a listening window, the room will settle it.' });
+      return sessionId;
+    } catch (e) {
+      setVerify(null);
+      setResult({ kind: 'fail', title: 'Could not check you in', text: friendly(e) });
+      return null;
+    }
+  }, [profile]);
+
+  return {
+    verify, result, setResult, reflection, run,
+    cancel: () => { cancelled.current = true; setVerify(null); },
+    submitReflection: t => reflection && reflection.resolve(t),
+    cancelReflection: () => reflection && reflection.resolve(null)
+  };
+}
+
+function ScanScreen({ onBack, onCode }) {
+  const [manual, setManual] = useState('');
+  const [camErr, setCamErr] = useState(null);
+  const scanner = useRef(null);
+  const fired = useRef(false);
+
+  const stop = useCallback(async () => {
+    const s = scanner.current; scanner.current = null;
+    if (s) { try { await s.stop(); s.clear(); } catch (e) {} }
+  }, []);
+
+  useEffect(() => {
+    if (typeof Html5Qrcode === 'undefined') { setCamErr('Scanner unavailable — type the session code below.'); return; }
+    let s;
+    try { s = new Html5Qrcode('reader'); } catch (e) { setCamErr(e.message); return; }
+    scanner.current = s;
+    s.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } },
+      text => { if (!fired.current) { fired.current = true; stop().then(() => onCode(text)); } }, () => {})
+     .catch(() => setCamErr('Camera unavailable — type the session code below.'));
+    return () => { stop(); };
+  }, []);                                                // eslint-disable-line
+
   return html`
-    <div class="scan-result-overlay">
-      <div class="result-card">
-        <div class=${'result-icon ' + kind}><${Icon} name=${icon} /></div>
-        <h3>${title}</h3>
-        <p>${text}</p>
-        ${verification && html`<${Confidence} v=${verification} />`}
-        ${onListen && !listening && html`
-          <p style=${{'fontSize': '.7rem', 'color': 'var(--text-faint)', 'lineHeight': '1.5', 'margin': '0 0 10px'}}>
-            This is the main attendance check — your phone records the same few
-            seconds as everyone else when your lecturer opens a window. The audio
-            never leaves the device, only a few hundred numbers describing the
-            sound pattern, deleted once attendance is worked out.
-          </p>
-          <${Btn} kind="gold" onClick=${onListen}>
-            <${Icon} name="fa-ear-listen" /> Start listening for the room
-          <//>`}
-        ${listening && html`
-          <p style=${{'fontSize': '.7rem', 'color': 'var(--text-faint)', 'lineHeight': '1.5', 'margin': '0 0 10px'}}>
-            Your phone is listening for the room. Leave this page open.
-          </p>`}
-        <${Btn} onClick=${onClose}>Done<//>
+    <div class="screen active scan-wrap">
+      <div class="scan-step-row">
+        <button class="icon-btn" onClick=${() => stop().then(onBack)}><${Icon} name="fa-arrow-left" /></button>
+        <span class="scan-step-pill">Scan to Check In</span>
+      </div>
+      <h3>Scan Session QR</h3>
+      <p class="scan-hint">Point your camera at the lecturer’s QR code</p>
+      <div class="camera-stage"><div id="reader" /><div class="scan-frame"><div class="scan-line" /></div></div>
+      ${camErr ? html`<${Status} msg=${{ kind: 'error', text: camErr }} />` : null}
+      <div class="scan-manual">
+        <label>or enter the session ID</label>
+        <div class="input-wrap"><input class="input" value=${manual} placeholder="Session ID" onChange=${e => setManual(e.target.value)} /></div>
+        <${Btn} small onClick=${() => manual.trim() && stop().then(() => onCode(manual.trim()))}>Check in<//>
       </div>
     </div>`;
 }
-
-/** Shows the student exactly what the decision rested on. */
-function Confidence({ v }) {
-  const pct = Math.round((v.score || 0) * 100);
-  const cls = v.score >= 0.72 ? 'ok' : v.score >= 0.42 ? 'warn' : 'bad';
-  return html`
-    <div class="conf-wrap">
-      <div class="conf-head">
-        <span>Confidence</span>
-        <span class=${'conf-pill ' + cls}>${pct}%</span>
-      </div>
-      <div class="conf-track">
-        <div class=${'conf-fill ' + cls} style=${{ width: pct + '%' }} />
-      </div>
-      ${v.reasons && v.reasons.length ? html`
-        <div class="rv-why">${v.reasons.slice(0, 3).join(' · ')}</div>` : null}
-    </div>`;
-}
-
-// ---------------------------------------------------------------- listening bar
 
 function ListeningBar({ state, onStop }) {
   if (!state) return null;
-  const num = state.phase === 'countdown' ? state.seconds
-            : state.phase === 'submitted' ? '✓' : '•';
+  const num = state.phase === 'countdown' ? state.seconds : state.phase === 'submitted' ? '✓' : '•';
   return html`
     <div id="ac-student-bar">
       <div class="num">${num}</div>
@@ -2397,358 +2755,1118 @@ function ListeningBar({ state, onStop }) {
     </div>`;
 }
 
-// ---------------------------------------------------------------- check-in flow
-
-const VF_STEPS = [
-  { id: 'signal',    label: 'Reading your location' },
-  { id: 'boundary',  label: 'Matching the venue outline' },
-  { id: 'stability', label: 'Checking reading stability' },
-  { id: 'room',      label: 'Comparing with the room' },
-  { id: 'device',    label: 'Confirming device and code' }
-];
-
-function useCheckIn() {
-  const { profile } = useAuth();
-  const [verify, setVerify] = useState(null);     // {steps, readings, unit}
-  const [result, setResult] = useState(null);
-  const cancelled = useRef(false);
-
-  const run = useCallback(async rawCode => {
-    cancelled.current = false;
-    const parts = String(rawCode).split('~');
-    const sessionId = parts[0].trim();
-    const token = parts[1] ? parts[1].trim() : null;
-
-    let steps = VF_STEPS.map(s => ({ ...s, state: null, value: '' }));
-    const paint = (patch = {}) => setVerify(v => ({
-      steps, readings: 0, unit: 'readings', ...(v || {}), ...patch, steps
-    }));
-    paint({ readings: 0, unit: 'readings' });
-
-    const mark = (id, state, value) => {
-      steps = steps.map(s => s.id === id ? { ...s, state, value } : s);
-      paint();
-    };
-
-    try {
-      const row = await api.session(sessionId);
-      if (!row) throw new Error('This code does not match an open session.');
-      const session = toEngineSession(row);
-      if (session.expiresAt && Date.now() > session.expiresAt)
-        throw new Error('This session is no longer accepting check-ins.');
-
-      // --- GPS samples, with the dial counting them in
-      const samples = await collectGpsSamples(list =>
-        paint({ readings: list.length, unit: 'readings' }));
-      if (cancelled.current) { setVerify(null); return; }
-
-      const fix = robustFix(samples);
-      paint({ readings: Math.round(fix.accuracy), unit: 'metre accuracy' });
-      mark('signal', fix.accuracy <= 35 ? 'ok' : 'warn',
-        samples.length + ' · ±' + Math.round(fix.accuracy) + 'm');
-
-      let peerAgg = null;
-      try { peerAgg = await api.peerCentroid(sessionId); } catch (e) {}
-
-      const verification = scoreCheckIn({
-        fix, samples, session, peerAgg,
-        scannedToken: token,
-        studentNumber: profile.student_number
-      });
-      const f = verification.factors;
-
-      await sleep(240);
-      mark('boundary', f.containment >= 0.7 ? 'ok' : f.containment >= 0.4 ? 'warn' : 'bad',
-        f.distance <= 0 ? 'inside' : f.distance + 'm out');
-      await sleep(200);
-      mark('stability', f.agreement >= 0.7 ? 'ok' : f.agreement >= 0.4 ? 'warn' : 'bad',
-        Math.round(f.agreement * 100) + '% agree');
-      await sleep(200);
-      mark('room', !f.consensusPeers ? 'warn' : f.consensusScore >= 0.6 ? 'ok' : 'bad',
-        f.consensusPeers ? (f.consensusDistance + 'm off') : 'first in');
-      await sleep(200);
-      mark('device', f.integrity >= 0.9 ? 'ok' : f.integrity >= 0.5 ? 'warn' : 'bad',
-        f.presence);
-      await sleep(420);
-      setVerify(null);
-
-      /* The polygon is the backup, not the gate. A weak fix indoors is the
-         expected case, so it no longer refuses the check-in - the record goes
-         on at review and the room settles it. Tampering is different: a frozen
-         or teleporting feed is a deliberate act and still stops here. */
-      const tampered = (verification.flags || [])
-        .some(x => x.code === 'frozen' || x.code === 'teleport');
-      if (tampered) {
-        setResult({ kind: 'fail', title: 'Check-in not accepted', verification,
-          text: 'These location readings look artificial rather than weak — ' +
-                verification.reasons.slice(0, 2).join(', ') +
-                '. Turn off any mock-location app and try again.' });
-        return null;
-      }
-
-      const res = await api.checkIn(sessionId, {
-        status: verification.tier === 'verified' ? 'present' : 'review',
-        gps: { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy },
-        verification,
-        deviceId: getDeviceId()
-      });
-
-      if (res && res.committed === false) {
-        setResult({ kind: 'warn', title: 'Already checked in',
-          text: 'This session already has a check-in from you.' });
-        return null;
-      }
-
-      setResult({
-        kind: verification.tier === 'verified' ? 'ok' : 'warn',
-        title: verification.tier === 'verified' ? 'Checked in' : 'On the register — pending',
-        verification,
-        text: verification.tier === 'verified'
-          ? `You're marked present for ${session.moduleCode || 'this session'} at ${session.venueName || ''}.`
-          : 'The location evidence was borderline. Keeping the app listening can settle it without anyone having to judge.'
-      });
-      return sessionId;
-    } catch (e) {
-      setVerify(null);
-      setResult({ kind: 'fail', title: 'Could not check you in', text: e.message });
-      return null;
-    }
-  }, [profile]);
-
-  const cancel = () => { cancelled.current = true; setVerify(null); };
-  return { verify, result, setResult, run, cancel };
-}
-
-// ---------------------------------------------------------------- scanner
-
-function ScanScreen({ onBack, onCode }) {
-  const [manual, setManual] = useState('');
-  const [camErr, setCamErr] = useState(null);
-  const scanner = useRef(null);
-  const fired = useRef(false);
-
-  useEffect(() => {
-    if (typeof Html5Qrcode === 'undefined') { setCamErr('Scanner library unavailable'); return; }
-    let s;
-    try { s = new Html5Qrcode('reader'); } catch (e) { setCamErr(e.message); return; }
-    scanner.current = s;
-    s.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } },
-      text => { if (!fired.current) { fired.current = true; stop().then(() => onCode(text)); } },
-      () => {}
-    ).catch(e => setCamErr('Camera unavailable — type the session code instead.'));
-    return () => { stop(); };
-  }, []);
-
-  async function stop() {
-    const s = scanner.current;
-    scanner.current = null;
-    if (!s) return;
-    try { await s.stop(); s.clear(); } catch (e) {}
-  }
-
-  return html`
-    <div class="screen active scan-wrap">
-      <div class="scan-step-row">
-        <button class="icon-btn" onClick=${() => stop().then(onBack)}>
-          <${Icon} name="fa-arrow-left" /></button>
-        <span class="scan-step-pill">Scan to Check In</span>
-      </div>
-      <h3>Scan Session QR</h3>
-      <p class="scan-hint">Point your camera at the lecturer's QR code</p>
-      <div class="camera-stage">
-        <div id="reader" />
-        <div class="scan-frame"><div class="scan-line" /></div>
-      </div>
-      ${camErr && html`<div class="status-msg error">${camErr}</div>`}
-      <div class="scan-manual">
-        <label>or enter session code</label>
-        <div class="input-wrap">
-          <input class="input" value=${manual} placeholder="Session ID"
-            onChange=${e => setManual(e.target.value)} />
-        </div>
-        <${Btn} small onClick=${() => manual.trim() && stop().then(() => onCode(manual.trim()))}>
-          Look up<//>
-      </div>
-    </div>`;
-}
-
-// ---------------------------------------------------------------- student home
+// ===================================================================== student
 
 function StudentHome({ go, onCheckIn }) {
-  const { profile, signOut } = useAuth();
-  const [sessions, setSessions] = useState(null);
-  const [records, setRecords] = useState([]);
-  const [enrol, setEnrol] = useState([]);
-
-  useEffect(() => {
-    api.openSessions().then(setSessions).catch(() => setSessions([]));
-    api.myAttendance().then(setRecords).catch(() => {});
-    api.enrolments().then(setEnrol).catch(() => {});
-  }, []);
-
-  const present = records.filter(r => r.status === 'present').length;
+  const { profile } = useAuth();
+  const sessions = useLoad(api.openSessions, []);
+  const records = useLoad(() => api.myAttendance(profile.id), [profile.id]);
+  const enrol = useLoad(api.enrolments, []);
+  const recs = (records.data || []).filter(r => r.status !== 'not_recorded');
+  const present = recs.filter(r => r.status === 'present').length;
+  const rate = recs.length ? Math.round(100 * present / recs.length) : 0;
 
   return html`
-    <div class="screen active page-pad">
-      <div class="topbar">
-        <h3>Hi, ${(profile.display_name || '').split(' ')[0] || 'there'}</h3>
-        <button class="icon-btn" onClick=${signOut}><${Icon} name="fa-right-from-bracket" /></button>
-      </div>
-
-      <div class="greet-card">
-        <div class="greet-stats">
-          <div class="stat-box"><b>${present}</b><span>present</span></div>
-          <div class="stat-box"><b>${records.length}</b><span>records</span></div>
-          <div class="stat-box"><b>${enrol.length}</b><span>courses</span></div>
+    <div class="screen active">
+      <div class="page-pad">
+        <div class="greet-card">
+          <div class="hi">Welcome back</div>
+          <h2>${profile.display_name}</h2>
+          <div class="greet-stats">
+            <div><b>${rate}%</b><span>attendance</span></div>
+            <div><b>${present}</b><span>present</span></div>
+            <div><b>${(enrol.data || []).length}</b><span>courses</span></div>
+          </div>
         </div>
       </div>
 
       <div class="quick-actions">
-        <div class="qa-btn" onClick=${() => go('scan')}>
-          <${Icon} name="fa-qrcode" /><span>Scan QR</span>
-        </div>
-        <div class="qa-btn" onClick=${() => go('history')}>
-          <${Icon} name="fa-clock-rotate-left" /><span>History</span>
-        </div>
+        <div class="qa-btn" onClick=${() => go('scan')}><${Icon} name="fa-qrcode" /><span>Scan QR</span></div>
+        <div class="qa-btn" onClick=${() => go('history')}><${Icon} name="fa-clock-rotate-left" /><span>History</span></div>
+        <div class="qa-btn" onClick=${() => go('updates')}><${Icon} name="fa-bell" /><span>Updates</span></div>
+        <div class="qa-btn" onClick=${() => go('card')}><${Icon} name="fa-id-badge" /><span>ID Card</span></div>
       </div>
 
-      <div class="section-title">Open classes</div>
-      ${sessions === null
-        ? html`<div class="skel" />`
-        : sessions.length === 0
-          ? html`<div class="empty"><${Icon} name="fa-calendar-xmark" />
-                   <h4>Nothing open</h4>
-                   <p>${enrol.length ? 'No class is accepting check-ins right now.'
-                       : 'You are not on any class list yet — ask your lecturer to add ' +
-                         (profile.student_number || 'your student number') + '.'}</p>
-                 </div>`
-          : sessions.map(s => html`
+      <div class="section-title"><h3>Open classes</h3><span class="see-all" onClick=${sessions.reload}>Refresh</span></div>
+      <div class="page-pad" style=${{ paddingTop: 0 }}>
+        ${sessions.loading ? html`<${Loading} />`
+          : sessions.error ? html`<${Status} msg=${{ kind: 'error', text: sessions.error }} />`
+          : !sessions.data.length ? html`<${Empty} icon="fa-calendar-xmark" title="Nothing open right now"
+              text=${(enrol.data || []).length ? 'When your lecturer starts a class it appears here.'
+                : 'You are not on any class list yet. Ask your lecturer to add ' + (profile.student_number || 'your student number') + '.'} />`
+          : sessions.data.map(s => html`
               <div key=${s.id} class="class-card" onClick=${() => onCheckIn(s.id)}>
-                <div>
-                  <h4>${(s.aa_courses && s.aa_courses.code) || (s.meta && s.meta.moduleCode) || s.title}</h4>
-                  <span>${s.venue || ''}</span>
-                </div>
-                <span class="session-status live">
-                  <${Icon} name="fa-circle" style=${{ fontSize: '.5rem' }} /> LIVE</span>
+                <span class="tag now">LIVE</span>
+                <h4>${codeOf(s)}${s.aa_courses && s.aa_courses.title ? ' · ' + s.aa_courses.title : ''}</h4>
+                <div class="meta"><${Icon} name="fa-location-dot" /> ${s.venue || 'Venue not set'}
+                  · closes ${s.expires_at ? fmtTime(s.expires_at) : 'when ended'}</div>
               </div>`)}
+      </div>
+      <div style=${{ height: '100px' }} />
     </div>`;
 }
-
-// ---------------------------------------------------------------- history
 
 function History({ onBack }) {
-  const [rows, setRows] = useState(null);
-  useEffect(() => { api.myAttendance().then(setRows).catch(() => setRows([])); }, []);
+  const { profile } = useAuth();
+  const { data, loading, error } = useLoad(() => api.myAttendance(profile.id), [profile.id]);
+  const rows = (data || []).filter(r => r.status !== 'not_recorded' || r.checked_in_at);
   return html`
-    <div class="screen active page-pad">
-      <div class="topbar">
-        <button class="icon-btn" onClick=${onBack}><${Icon} name="fa-arrow-left" /></button>
-        <h3>My attendance</h3>
+    <div class="screen active">
+      <${Topbar} title="My Attendance" onBack=${onBack} />
+      <div class="page-pad">
+        ${loading ? html`<${Loading} />` : error ? html`<${Status} msg=${{ kind: 'error', text: error }} />`
+          : !rows.length ? html`<${Empty} icon="fa-clock-rotate-left" title="Nothing yet" text="Your check-ins appear here." />`
+          : rows.map((r, i) => {
+              const cs = r.aa_class_sessions || {};
+              const when = r.checked_in_at || cs.started_at;
+              const d = when ? new Date(when) : null;
+              return html`
+                <div key=${i} class="history-item">
+                  <div class="h-date"><div class="d">${d ? d.getDate() : '—'}</div><div class="m">${d ? d.toLocaleString('en', { month: 'short' }) : ''}</div></div>
+                  <div style=${{ flex: 1 }}>
+                    <h4>${codeOf({ meta: cs.meta, aa_courses: cs.aa_courses, title: cs.title })}</h4>
+                    <div class="meta">${cs.venue || ''}${r.checked_in_at ? ' · ' + fmtTime(r.checked_in_at) : ''}
+                      ${r.windows_analysed ? ' · heard in ' + r.windows_present + '/' + r.windows_analysed + ' windows' : ''}
+                      ${r.source === 'fused' ? ' · room + location' : r.source === 'acoustic' ? ' · room' : r.source === 'location' ? ' · location' : r.source === 'manual' ? ' · set by lecturer' : ''}</div>
+                    <${Badge} status=${r.status} />
+                  </div>
+                </div>`;
+            })}
       </div>
-      ${rows === null ? html`<div class="skel" />`
-        : rows.length === 0
-          ? html`<div class="empty"><${Icon} name="fa-clock-rotate-left" />
-                   <h4>Nothing yet</h4><p>Your check-ins will appear here.</p></div>`
-          : rows.map((r, i) => html`
-              <div key=${i} class="history-item">
-                <div>
-                  <h4>${(r.aa_courses && r.aa_courses.code) || '—'}
-                    ${r.aa_class_sessions && r.aa_class_sessions.title
-                      ? ' · ' + r.aa_class_sessions.title : ''}</h4>
-                  <span>${r.checked_in_at
-                    ? new Date(r.checked_in_at).toLocaleString()
-                    : (r.aa_class_sessions && r.aa_class_sessions.started_at
-                        ? new Date(r.aa_class_sessions.started_at).toLocaleDateString() : '—')}
-                    ${r.windows_analysed ? ' · heard in ' + r.windows_present + '/' + r.windows_analysed : ''}
-                    ${r.source === 'fused' ? ' · room + location' : r.source === 'acoustic' ? ' · room' : ''}
-                  </span>
-                </div>
-                <${Badge} status=${r.status} />
-              </div>`)}
+      <div style=${{ height: '100px' }} />
     </div>`;
 }
 
-// ---------------------------------------------------------------- the app
+/** Shrink a photo client-side so it fits comfortably in a text column. */
+function compressImage(file, max = 360) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function DigitalCard({ onBack }) {
+  const { profile, setProfile } = useAuth();
+  const toast = useToast();
+  const input = useRef(null);
+  const parts = (profile.display_name || '').trim().split(/\s+/);
+  const reg = profile.created_at ? new Date(profile.created_at) : new Date();
+
+  async function pick(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const data = await compressImage(file);
+      setProfile(await api.updateProfile(profile.id, { photo_data: data }));
+      toast('Photo updated', 'success');
+    } catch (err) { toast('Could not save that photo: ' + friendly(err), 'error'); }
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Digital ID Card" onBack=${onBack} />
+      <div class="idc-stage">
+        <div class="idc-card">
+          <div class="idc-band">
+            <div><div class="idc-label">University of Venda</div><div class="idc-univ-line">Student Identity Card</div></div>
+            <div class="idc-year">${reg.getFullYear()}</div>
+          </div>
+          <div class="idc-body">
+            <div class="idc-photo-col">
+              <div class="idc-photo-box" onClick=${() => input.current.click()}>
+                ${profile.photo_data ? html`<img src=${profile.photo_data} />`
+                  : html`<div class="idc-placeholder">Tap to<br />upload photo</div>`}
+                <div class="idc-hint">Change photo</div>
+              </div>
+              <input ref=${input} type="file" accept="image/*" class="hidden" onChange=${pick} />
+            </div>
+            <div class="idc-info">
+              <div class="idc-role">Student</div>
+              <div class="idc-name-line">${(parts[0] || '').toUpperCase()}</div>
+              <div class="idc-name-line">${parts.slice(1).join(' ').toUpperCase()}</div>
+              <div class="idc-num-row"><${Icon} name="fa-hashtag" style=${{ color: 'var(--gold)', fontSize: '11px' }} />
+                <span class="idc-num">${profile.student_number || '—'}</span></div>
+              <div class="idc-reg">Registered <b>${reg.toLocaleDateString()}</b></div>
+            </div>
+          </div>
+          <div class="idc-uni-footer"><div><div class="idc-uni-name">University of Venda</div><div class="idc-tagline">Creating Future Leaders</div></div></div>
+          <div class="idc-stripe" />
+          <div class="idc-footer-area"><div class="idc-site">www.univen.ac.za</div></div>
+        </div>
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
 
 function StudentApp() {
-  const { profile } = useAuth();
+  const toast = useToast();
   const [screen, setScreen] = useState('home');
-  const { verify, result, setResult, run, cancel } = useCheckIn();
-  const [listen, setListen] = useState(null);      // last acoustic state
-  const [sessionId, setSessionId] = useState(null);
+  const ci = useCheckIn();
+  const [listen, setListen] = useState(null);
+  const [needsTap, setNeedsTap] = useState(null);
+  const [micErr, setMicErr] = useState(null);
 
   const startListening = useCallback(async id => {
-    if (!window.uvnAcoustic) return;
+    if (!window.uvnAcoustic) { toast('Audio is still loading — try again in a moment', 'error'); return false; }
+    setMicErr(null);
     try {
       await window.uvnAcoustic.startListening(id, s => setListen(s));
+      setNeedsTap(null);
+      return true;
     } catch (e) {
+      // The layer reports "asking for the microphone" before it asks, so a
+      // refusal has to clear that, or the bar sits on it forever.
+      window.uvnAcoustic.stopListening();
       setListen(null);
-      alert('Microphone unavailable: ' + e.message);
+      setMicErr(e && e.name === 'NotAllowedError'
+        ? 'Microphone access is blocked for this site. Allow it in your browser settings and tap below — until then, the location check decides your attendance.'
+        : 'The microphone could not start (' + friendly(e) + '). The location check will decide your attendance.');
+      return false;
     }
-  }, []);
+  }, [toast]);
 
   const stopListening = useCallback(() => {
     if (window.uvnAcoustic) window.uvnAcoustic.stopListening();
     setListen(null);
   }, []);
-
   useEffect(() => () => stopListening(), [stopListening]);
 
   const doCheckIn = useCallback(async code => {
     setScreen('home');
-    const id = await run(code);
-    if (id) {
-      setSessionId(id);
-      // listening is the main check, so try it without waiting to be asked;
-      // browsers that want a fresh gesture fall back to the button
-      try { await startListening(id); } catch (e) {}
-    }
-  }, [run, startListening]);
+    const id = await ci.run(code);
+    // Listening is the main check, so it starts by itself. Browsers that want
+    // a fresh tap before opening the microphone get a button instead.
+    if (id && !(await startListening(id))) setNeedsTap(id);
+  }, [ci.run, startListening]);
+
+  const nav = [
+    { id: 'home', icon: 'fa-house', label: 'Home' },
+    { id: 'history', icon: 'fa-clock-rotate-left', label: 'History' },
+    { id: 'updates', icon: 'fa-bell', label: 'Updates' },
+    { id: 'profile', icon: 'fa-user', label: 'Profile' }
+  ];
+  const back = () => setScreen('home');
+  const r = ci.result;
+
+  return html`<${React.Fragment}>
+    ${screen === 'home' ? html`<${StudentHome} go=${setScreen} onCheckIn=${doCheckIn} />` : null}
+    ${screen === 'scan' ? html`<${ScanScreen} onBack=${back} onCode=${doCheckIn} />` : null}
+    ${screen === 'history' ? html`<${History} onBack=${back} />` : null}
+    ${screen === 'updates' ? html`<${Notifications} onBack=${back} />` : null}
+    ${screen === 'card' ? html`<${DigitalCard} onBack=${() => setScreen('profile')} />` : null}
+    ${screen === 'edit' ? html`<${EditName} onBack=${() => setScreen('profile')} />` : null}
+    ${screen === 'password' ? html`<${ChangePassword} onBack=${() => setScreen('profile')} />` : null}
+    ${screen === 'profile' ? html`<${ProfileScreen} go=${setScreen} extraRows=${html`
+      <div class="settings-row" onClick=${() => setScreen('card')}><${Icon} name="fa-id-badge" /><span>Digital ID Card</span><${Icon} name="fa-chevron-right chev" /></div>`} />` : null}
+
+    ${screen !== 'scan' ? html`<${BottomNav} items=${nav} current=${screen} onGo=${setScreen}
+        fab=${{ icon: 'fa-qrcode', onClick: () => setScreen('scan') }} />` : null}
+
+    ${ci.verify ? html`<${VerifyOverlay} ...${ci.verify} onCancel=${ci.cancel} />` : null}
+    ${ci.reflection ? html`<${ReflectionModal} req=${ci.reflection} onSubmit=${ci.submitReflection} onCancel=${ci.cancelReflection} />` : null}
+    ${r ? html`<${Modal}>
+      <div class=${'result-icon ' + r.kind}><${Icon} name=${r.kind === 'ok' ? 'fa-circle-check' : r.kind === 'warn' ? 'fa-triangle-exclamation' : 'fa-circle-xmark'} /></div>
+      <h3>${r.title}</h3>
+      <p>${r.text}</p>
+      <${Confidence} v=${r.verification} />
+      ${micErr && needsTap === r.sessionId ? html`<${Status} msg=${{ kind: 'error', text: micErr }} />` : null}
+      ${needsTap && needsTap === r.sessionId && !listen ? html`
+        <p style=${{ fontSize: '.72rem', color: 'var(--text-faint)', lineHeight: 1.5 }}>
+          Listening is the main attendance check. Your phone records the same few seconds as everyone
+          else when your lecturer opens a window. The audio never leaves this device — only a few hundred
+          numbers describing the sound pattern, deleted once attendance is worked out.</p>
+        <${Btn} kind="gold" onClick=${() => startListening(needsTap)}><${Icon} name="fa-ear-listen" /> Start listening for the room<//>` : null}
+      ${listen ? html`<p style=${{ fontSize: '.72rem', color: 'var(--success)' }}>Listening for the room. Leave this page open.</p>` : null}
+      <${Btn} onClick=${() => ci.setResult(null)}>Done<//>
+    <//>` : null}
+    <${ListeningBar} state=${listen} onStop=${stopListening} />
+  <//>`;
+}
+
+// ===================================================================== lecturer: dashboard
+
+function Dashboard({ go, openSession, useTemplate }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const sessions = useLoad(() => api.mySessions(profile.id), [profile.id]);
+  const courses = useLoad(() => api.myCourses(profile.id), [profile.id]);
+  const templates = useLoad(() => api.templates(profile.id), [profile.id]);
+  const [counts, setCounts] = useState({});
+
+  useEffect(() => {
+    const list = sessions.data || [];
+    api.checkedInCounts(list.map(s => s.id)).then(rows => {
+      const c = {};
+      rows.forEach(r => {
+        c[r.class_session_id] = c[r.class_session_id] || { in: 0, present: 0 };
+        if (r.checked_in_at || r.status === 'present') c[r.class_session_id].in++;
+        if (r.status === 'present') c[r.class_session_id].present++;
+      });
+      setCounts(c);
+    }).catch(() => {});
+  }, [sessions.data]);
+
+  const list = sessions.data || [];
+  const live = list.filter(isOpen);
 
   return html`
-    <${React.Fragment}>
-      ${screen === 'home' && html`
-        <${StudentHome} go=${setScreen} onCheckIn=${doCheckIn} />`}
-      ${screen === 'scan' && html`
-        <${ScanScreen} onBack=${() => setScreen('home')} onCode=${doCheckIn} />`}
-      ${screen === 'history' && html`
-        <${History} onBack=${() => setScreen('home')} />`}
+    <div class="screen active">
+      <div class="page-pad">
+        <div class="greet-card">
+          <div class="hi">Lecturer</div>
+          <h2>${profile.display_name}</h2>
+          <div class="greet-stats">
+            <div><b>${live.length}</b><span>live</span></div>
+            <div><b>${list.length}</b><span>sessions</span></div>
+            <div><b>${(courses.data || []).length}</b><span>classes</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="quick-actions">
+        <div class="qa-btn" onClick=${() => go('create')}><${Icon} name="fa-qrcode" /><span>New session</span></div>
+        <div class="qa-btn" onClick=${() => go('classes')}><${Icon} name="fa-users" /><span>Classes</span></div>
+        <div class="qa-btn" onClick=${() => go('venues')}><${Icon} name="fa-draw-polygon" /><span>Venues</span></div>
+        <div class="qa-btn" onClick=${() => go('post')}><${Icon} name="fa-bullhorn" /><span>Post update</span></div>
+      </div>
 
-      ${verify && html`<${VerifyOverlay} ...${verify} onCancel=${cancel} />`}
-      <${ResultOverlay} result=${result} listening=${!!listen}
-        onClose=${() => setResult(null)}
-        onListen=${sessionId ? () => startListening(sessionId) : null} />
-      <${ListeningBar} state=${listen} onStop=${stopListening} />
-    <//>`;
+      ${(templates.data || []).length ? html`
+        <div class="section-title"><h3>Saved templates</h3></div>
+        <div class="page-pad" style=${{ paddingTop: 0 }}>
+          ${templates.data.map(t => html`
+            <div key=${t.id} class="class-card" style=${{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style=${{ flex: 1 }} onClick=${() => useTemplate(t)}>
+                <h4>${t.title}</h4>
+                <div class="meta">${t.payload.venueName || 'current location'} · ${t.payload.expireMinutes || 60} min${t.payload.reflectionMinWords ? ' · reflection' : ''}</div>
+              </div>
+              <${Btn} small onClick=${() => useTemplate(t)}>Use<//>
+              <button class="icon-btn" onClick=${async () => {
+                if (!confirm('Delete this template?')) return;
+                await api.deleteTemplate(t.id); templates.reload(); toast('Template deleted');
+              }}><${Icon} name="fa-trash" /></button>
+            </div>`)}
+        </div>` : null}
+
+      <div class="section-title"><h3>Sessions</h3><span class="see-all" onClick=${sessions.reload}>Refresh</span></div>
+      <div class="page-pad" style=${{ paddingTop: 0 }}>
+        ${sessions.loading ? html`<${Loading} />`
+          : sessions.error ? html`<${Status} msg=${{ kind: 'error', text: sessions.error }} />`
+          : !list.length ? html`<${Empty} icon="fa-calendar-plus" title="No sessions yet" text="Start one from New session." />`
+          : list.map(s => html`
+              <div key=${s.id} class="class-card" onClick=${() => openSession(s)}>
+                <span class=${'tag' + (isOpen(s) ? ' now' : '')}>${isOpen(s) ? 'LIVE' : s.status === 'open' ? 'EXPIRED' : 'CLOSED'}</span>
+                <h4>${codeOf(s)}${s.aa_courses && s.aa_courses.title ? ' · ' + s.aa_courses.title : ''}</h4>
+                <div class="meta"><${Icon} name="fa-location-dot" /> ${s.venue || '—'} · ${fmtWhen(s.started_at)}
+                  · ${(counts[s.id] && counts[s.id].in) || 0} checked in</div>
+              </div>`)}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer: create session
+
+/** Collect a GPS fix, for sessions or venue vertices. */
+async function currentFix() {
+  const samples = await collectGpsSamples();
+  return robustFix(samples);
+}
+
+function CreateSession({ onBack, onCreated, template }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const courses = useLoad(() => api.myCourses(profile.id), [profile.id]);
+  const venues = useLoad(api.venues, []);
+  const p = (template && template.payload) || {};
+  const [f, setF] = useState({
+    courseId: p.courseId || (template && template.course_id) || '',
+    moduleCode: p.moduleCode || '', venueId: p.venueId || (template && template.venue_id) || '',
+    venueText: p.venueText || '', radius: p.radius || 60, expire: p.expireMinutes || 60,
+    reflect: !!p.reflectionMinWords, words: p.reflectionMinWords || 50, prompt: p.reflectionPrompt || ''
+  });
+  const [loc, setLoc] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = k => e => setF(s => ({ ...s, [k]: e.target ? (e.target.type === 'checkbox' ? e.target.checked : e.target.value) : e }));
+
+  const course = (courses.data || []).find(c => c.id === f.courseId);
+  const venue = (venues.data || []).find(v => v.id === f.venueId);
+
+  async function capture() {
+    setMsg({ kind: 'info', text: 'Reading your location — hold still for a few seconds…' });
+    try { const fix = await currentFix(); setLoc(fix); setMsg({ kind: 'success', text: 'Location captured (±' + Math.round(fix.accuracy) + 'm).' }); }
+    catch (e) { setMsg({ kind: 'error', text: 'Could not read your location: ' + friendly(e) }); }
+  }
+
+  function payload() {
+    return {
+      courseId: f.courseId || null, moduleCode: course ? course.code : f.moduleCode.trim().toUpperCase(),
+      venueId: f.venueId || null, venueName: venue ? venue.name : f.venueText.trim(), venueText: f.venueText,
+      radius: Number(f.radius) || 60, expireMinutes: Number(f.expire) || 60,
+      reflectionMinWords: f.reflect ? Number(f.words) || 50 : null, reflectionPrompt: f.reflect ? f.prompt : ''
+    };
+  }
+
+  async function create() {
+    const pl = payload();
+    if (!pl.moduleCode) return setMsg({ kind: 'error', text: 'Pick a class, or type a module code.' });
+    if (!venue && !loc) return setMsg({ kind: 'error', text: 'Pick a drawn venue, or capture your current location as the venue centre.' });
+    setBusy(true); setMsg(null);
+    try {
+      const centre = venue ? (venue.centroid || polygonCentroid(venue.polygon)) : { lat: loc.lat, lng: loc.lng };
+      const s = await api.createSession({
+        id: uuid(), lecturer_id: profile.id, course_id: pl.courseId,
+        title: course ? course.title : pl.moduleCode, venue: pl.venueName || 'Lecture venue',
+        venue_id: pl.venueId, venue_polygon: venue ? venue.polygon : null,
+        lat: centre.lat, lng: centre.lng, radius_meters: venue ? (venue.radius_meters || 60) : pl.radius,
+        expires_at: new Date(Date.now() + pl.expireMinutes * 60000).toISOString(),
+        reflection_min_words: pl.reflectionMinWords, status: 'open',
+        meta: { moduleCode: pl.moduleCode, venueName: pl.venueName, lecturerName: profile.display_name,
+                requireReflection: !!pl.reflectionMinWords, reflectionPrompt: pl.reflectionPrompt || undefined }
+      });
+      toast('Session live', 'success');
+      onCreated(s);
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+    finally { setBusy(false); }
+  }
+
+  async function saveTemplate() {
+    const pl = payload();
+    if (!pl.moduleCode) return setMsg({ kind: 'error', text: 'A template needs a class or module code.' });
+    try {
+      await api.saveTemplate({ lecturer_id: profile.id, course_id: pl.courseId, venue_id: pl.venueId,
+        title: pl.moduleCode + (pl.venueName ? ' · ' + pl.venueName : ''), payload: pl });
+      toast('Template saved', 'success');
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title="New Session" onBack=${onBack} />
+      <div class="form-card">
+        <${Select} label="Class" value=${f.courseId} onChange=${set('courseId')}
+          options=${[{ value: '', label: 'Open session — any signed-in student' },
+                     ...(courses.data || []).map(c => ({ value: c.id, label: c.code + ' · ' + c.title }))]} />
+        ${!f.courseId ? html`<${Field} label="Module code" icon="fa-book" value=${f.moduleCode} onChange=${set('moduleCode')} placeholder="e.g. ACC1241" />` : null}
+
+        <${Select} label="Venue" value=${f.venueId} onChange=${set('venueId')}
+          options=${[{ value: '', label: 'Use my current location' },
+                     ...(venues.data || []).map(v => ({ value: v.id, label: v.name + ' (drawn outline)' }))]} />
+        ${!f.venueId ? html`
+          <${Field} label="Venue name" icon="fa-location-dot" value=${f.venueText} onChange=${set('venueText')} placeholder="e.g. Sci-Tech A" />
+          <${Field} label="Radius (metres)" type="number" icon="fa-circle-dot" value=${f.radius} onChange=${set('radius')} />
+          <${Btn} kind="ghost" onClick=${capture}><${Icon} name="fa-location-crosshairs" /> ${loc ? 'Recapture location' : 'Capture my location'}<//>
+          ${loc ? html`<div class="confirm-chip"><${Icon} name="fa-check-circle" /> ${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)} · ±${Math.round(loc.accuracy)}m</div>` : null}` : null}
+
+        <${Select} label="Accept check-ins for" value=${String(f.expire)} onChange=${set('expire')}
+          options=${[15, 30, 60, 90, 120, 180].map(m => ({ value: String(m), label: m + ' minutes' }))} />
+
+        <div class="settings-row" style=${{ padding: '10px 0' }}>
+          <${Icon} name="fa-pen-to-square" /><span>Require a written reflection</span>
+          <${Toggle} on=${f.reflect} onChange=${v => setF(s => ({ ...s, reflect: v }))} />
+        </div>
+        ${f.reflect ? html`
+          <${Field} label="Minimum words" type="number" value=${f.words} onChange=${set('words')} />
+          <${TextArea} label="Prompt (optional)" value=${f.prompt} onChange=${set('prompt')} placeholder="What was the key idea today?" />` : null}
+
+        <${Btn} busy=${busy} onClick=${create}><${Icon} name="fa-play" /> Start session<//>
+        <${Btn} kind="ghost" onClick=${saveTemplate}><${Icon} name="fa-bookmark" /> Save as template<//>
+        <${Status} msg=${msg} />
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer: live session
+
+function QrCode({ text }) {
+  const box = useRef(null);
+  useEffect(() => {
+    if (!box.current || typeof QRCode === 'undefined') return;
+    box.current.innerHTML = '';
+    new QRCode(box.current, { text, width: 210, height: 210, colorDark: '#12211a', colorLight: '#ffffff',
+                              correctLevel: QRCode.CorrectLevel.H });
+  }, [text]);
+  return html`<div id="qrcode-box" ref=${box} />`;
+}
+
+function useCountdown(until) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  if (!until) return null;
+  const left = Math.max(0, new Date(until).getTime() - now);
+  return { left, text: Math.floor(left / 60000) + ':' + String(Math.floor(left / 1000) % 60).padStart(2, '0') };
+}
+
+/** The room-listening controls: open a window, anchor it, match it. */
+function AcousticPanel({ session, onMatched }) {
+  const toast = useToast();
+  const [state, setState] = useState(null);
+  const [win, setWin] = useState(null);
+  const [count, setCount] = useState(0);
+  const [subs, setSubs] = useState(0);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => () => { if (window.uvnAcoustic) window.uvnAcoustic.releaseLecturerMic(); }, []);
+  useEffect(() => {
+    if (!win) return;
+    const t = setInterval(() => api.submissionCount(win.id).then(setSubs).catch(() => {}), 3000);
+    return () => clearInterval(t);
+  }, [win]);
+
+  async function open() {
+    if (!window.uvnAcoustic) return toast('Audio is still loading', 'error');
+    setBusy(true); setSubs(0);
+    try {
+      const w = await window.uvnAcoustic.openListeningWindow(session.id, setState);
+      setWin(w); setCount(c => c + 1);
+    } catch (e) { setState({ phase: 'error', text: friendly(e) }); toast(friendly(e), 'error'); }
+    finally { setBusy(false); }
+  }
+
+  async function match() {
+    setBusy(true);
+    try {
+      await window.uvnAcoustic.matchWindow(session.id, win.id, setState);
+      setWin(null); toast('Register updated', 'success'); onMatched();
+    } catch (e) { setState({ phase: 'error', text: friendly(e) }); toast(friendly(e), 'error'); }
+    finally { setBusy(false); }
+  }
+
+  const counting = state && (state.phase === 'countdown' || state.phase === 'listening');
+  return html`
+    <div class="ac-panel">
+      <div class="ac-head"><${Icon} name="fa-ear-listen" /> Room listening
+        <span class="ac-count">${count} window${count === 1 ? '' : 's'}${win ? ' · ' + subs + ' submitted' : ''}</span></div>
+      <div class="ac-status">${state ? state.text
+        : 'The main check. Your phone anchors the room: open a window and every device in the hall records the same five seconds.'}</div>
+      ${counting ? html`<div class="ac-dial"><span>${state.phase === 'countdown' ? state.seconds : '•'}</span></div>` : null}
+      <div style=${{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+        <${Btn} kind="gold" small busy=${busy && !win} disabled=${busy || !isOpen(session)} onClick=${open}>
+          <${Icon} name="fa-circle-dot" /> Open window<//>
+        <${Btn} kind="ghost" small busy=${busy && !!win} disabled=${!win || busy} onClick=${match}>
+          <${Icon} name="fa-code-compare" /> Match<//>
+      </div>
+    </div>`;
+}
+
+function RegisterList({ session, rows, onChanged }) {
+  const toast = useToast();
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState('all');
+  const list = rows
+    .filter(r => filter === 'all' ? true : filter === 'review' ? r.status === 'review' : filter === 'in' ? !!r.checked_in_at : r.status === filter)
+    .filter(r => !q || ((r.aa_profiles && (r.aa_profiles.display_name + ' ' + r.aa_profiles.student_number)) || '').toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => (a.aa_profiles?.display_name || '').localeCompare(b.aa_profiles?.display_name || ''));
+
+  async function set(r, status) {
+    let note = null;
+    if (status === 'absent' && !confirm('Mark ' + (r.aa_profiles?.display_name || 'this student') + ' absent?')) return;
+    if (status === 'excused') note = prompt('Reason for excusing (optional):') || null;
+    try { await api.override(session.id, r.student_id, status, note); toast('Saved', 'success'); onChanged(); }
+    catch (e) { toast(friendly(e), 'error'); }
+  }
+
+  const n = k => rows.filter(r => k === 'in' ? !!r.checked_in_at : r.status === k).length;
+  return html`
+    <div>
+      <div class="filter-chips">
+        ${[['all', 'All ' + rows.length], ['in', 'Checked in ' + n('in')], ['present', 'Present ' + n('present')],
+           ['review', 'Review ' + n('review')], ['not_recorded', 'Missing ' + n('not_recorded')]]
+          .map(([k, label]) => html`<div key=${k} class=${'chip' + (filter === k ? ' active' : '')} onClick=${() => setFilter(k)}>${label}</div>`)}
+      </div>
+      <div class="page-pad" style=${{ paddingTop: '6px' }}>
+        <div class="search-bar input-wrap"><${Icon} name="fa-magnifying-glass" />
+          <input class="input" placeholder="Search name or number" value=${q} onChange=${e => setQ(e.target.value)} /></div>
+        ${!list.length ? html`<${Empty} icon="fa-users" title="Nobody here yet" />`
+          : list.map(r => {
+              const p = r.aa_profiles || {};
+              const how = r.source === 'fused' ? 'room + location'
+                : r.source === 'acoustic' ? 'room' : r.source === 'location' ? 'location only'
+                : r.source === 'manual' ? 'set by you' : 'no check-in';
+              return html`
+                <div key=${r.student_id} class="stud-row">
+                  <div class="stud-avatar">${(p.display_name || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('')}</div>
+                  <div style=${{ flex: 1, minWidth: 0 }}>
+                    <h4>${p.display_name || 'Unknown'}</h4>
+                    <div class="meta">${p.student_number || ''}${r.checked_in_at ? ' · ' + fmtTime(r.checked_in_at) : ''} · ${how}
+                      ${r.windows_analysed ? ' · heard ' + r.windows_present + '/' + r.windows_analysed : ''}
+                      ${r.verification && typeof r.verification.score === 'number' ? ' · GPS ' + Math.round(r.verification.score * 100) + '%' : ''}</div>
+                    ${r.override_note ? html`<div class="meta">Note: ${r.override_note}</div>` : null}
+                    <${Badge} status=${r.status} />
+                  </div>
+                  <div class="rv-actions" style=${{ display: 'flex', gap: '4px' }}>
+                    <button class="icon-btn" title="Present" onClick=${() => set(r, 'present')}><${Icon} name="fa-check" /></button>
+                    <button class="icon-btn" title="Excused" onClick=${() => set(r, 'excused')}><${Icon} name="fa-user-clock" /></button>
+                    <button class="icon-btn" title="Absent" onClick=${() => set(r, 'absent')}><${Icon} name="fa-xmark" /></button>
+                  </div>
+                </div>`;
+            })}
+      </div>
+    </div>`;
+}
+
+function LiveSession({ session: initial, onBack }) {
+  const toast = useToast();
+  const [session, setSession] = useState(initial);
+  const [token, setToken] = useState(null);
+  const [rows, setRows] = useState([]);
+  const cd = useCountdown(session.expires_at);
+  const live = isOpen(session) && (!cd || cd.left > 0);
+
+  const reload = useCallback(async () => {
+    try { setRows(await api.register(session.id)); } catch (e) {}
+    try { const s = await api.session(session.id); if (s) setSession(s); } catch (e) {}
+  }, [session.id]);
+
+  // live register: a realtime subscription, with a slow poll behind it in
+  // case the socket drops on campus Wi-Fi
+  useEffect(() => {
+    reload();
+    const ch = sb.channel('reg:' + session.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'aa_attendance',
+                                filter: 'class_session_id=eq.' + session.id }, reload)
+      .subscribe();
+    const t = setInterval(reload, 12000);
+    return () => { sb.removeChannel(ch); clearInterval(t); };
+  }, [session.id, reload]);
+
+  /* The QR carries a code that changes every 30 seconds, so a screenshot
+     forwarded to someone at res is stale before they can use it. */
+  useEffect(() => {
+    if (!live) { setToken(null); return; }
+    let stop = false;
+    const rotate = async () => {
+      const value = Math.random().toString(36).slice(2, 8).toUpperCase();
+      try { await api.setToken(session.id, value); if (!stop) setToken(value); } catch (e) {}
+    };
+    rotate();
+    const t = setInterval(rotate, TOKEN_ROTATE_MS);
+    return () => { stop = true; clearInterval(t); };
+  }, [session.id, live]);
+
+  async function close() {
+    if (!confirm('Close this session? Students can no longer check in, and any unmatched audio is deleted.')) return;
+    try { await api.closeSession(session.id); toast('Session closed'); reload(); }
+    catch (e) { toast(friendly(e), 'error'); }
+  }
+  async function extend() {
+    try { await api.extend(session.id, 15); toast('Extended by 15 minutes', 'success'); reload(); }
+    catch (e) { toast(friendly(e), 'error'); }
+  }
+  function exportCsv() {
+    downloadCsv(codeOf(session) + '-' + fmtDate(session.started_at).replace(/\s/g, '') + '.csv', [
+      ['student_number', 'name', 'status', 'source', 'checked_in', 'heard_windows', 'gps_score', 'note', 'reflection'],
+      ...rows.map(r => [r.aa_profiles?.student_number, r.aa_profiles?.display_name, r.status, r.source,
+        r.checked_in_at || '', r.windows_analysed ? r.windows_present + '/' + r.windows_analysed : '',
+        r.verification && r.verification.score, r.override_note || '', r.reflection || ''])
+    ]);
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title=${codeOf(session)} onBack=${onBack}
+        right=${html`<button class="icon-btn" onClick=${exportCsv} title="Export CSV"><${Icon} name="fa-file-csv" /></button>`} />
+      <div class="page-pad">
+        <div class="qr-panel">
+          <div style=${{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+            <div style=${{ textAlign: 'left' }}>
+              <h4 style=${{ fontSize: '1rem', fontWeight: 800 }}>${codeOf(session)}</h4>
+              <div style=${{ fontSize: '.78rem', color: 'var(--text-soft)' }}>${session.venue || ''}</div>
+            </div>
+            <span class=${'session-status ' + (live ? 'live' : 'ended')}>
+              <${Icon} name="fa-circle" style=${{ fontSize: '.5rem' }} /> ${live ? 'LIVE' : 'CLOSED'}</span>
+          </div>
+          ${live && token ? html`
+            <${QrCode} text=${session.id + '~' + token} />
+            <div class="qr-timer">${cd ? cd.text : '—'}</div>
+            <div class="qr-meta">Students scan this code to check in</div>
+            <div class="qr-token-row"><span class="dot" /> Code ${token} · refreshes every 30s</div>` : live ? html`<${Loading} />`
+            : html`<${Empty} icon="fa-lock" title="Not accepting check-ins" text="The register below is still yours to correct." />`}
+
+          <div style=${{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface-2)', border: '1.5px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 12px', marginTop: '16px' }}>
+            <span style=${{ fontSize: '.72rem', color: 'var(--text-faint)' }}>Session ID</span>
+            <code style=${{ flex: 1, textAlign: 'left', fontSize: '.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>${session.id}</code>
+            <button class="icon-btn" onClick=${() => navigator.clipboard && navigator.clipboard.writeText(session.id).then(() => toast('Copied', 'success'))}><${Icon} name="fa-copy" /></button>
+          </div>
+
+          <${AcousticPanel} session=${session} onMatched=${reload} />
+
+          ${live ? html`<div style=${{ display: 'flex', gap: '10px', marginTop: '12px' }}>
+            <${Btn} kind="ghost" small onClick=${extend}><${Icon} name="fa-clock" /> +15 min<//>
+            <${Btn} kind="danger" small onClick=${close}><${Icon} name="fa-stop" /> Close session<//>
+          </div>` : null}
+        </div>
+      </div>
+      <div class="section-title"><h3>Register</h3><span class="see-all" onClick=${reload}>Refresh</span></div>
+      <${RegisterList} session=${session} rows=${rows} onChanged=${reload} />
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer: classes
+
+function Classes({ onBack, openClass }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const { data, loading, error, reload } = useLoad(() => api.myCourses(profile.id), [profile.id]);
+  const [f, setF] = useState({ code: '', title: '', min: 75, numbers: '' });
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
+
+  async function create() {
+    if (!f.code.trim() || !f.title.trim()) return setMsg({ kind: 'error', text: 'Module code and class name are required.' });
+    const numbers = parseNumbers(f.numbers);
+    setBusy(true); setMsg(null);
+    try {
+      const c = await api.createCourse({ lecturer_id: profile.id, lecturer_name: profile.display_name,
+        code: f.code.trim().toUpperCase(), title: f.title.trim(), min_attendance_pct: Number(f.min) || 75, roster: numbers });
+      let enrolled = 0;
+      for (const n of numbers) { try { await api.enrol(c.id, n); enrolled++; } catch (e) {} }
+      setF({ code: '', title: '', min: 75, numbers: '' });
+      toast('Class created', 'success');
+      setMsg({ kind: 'success', text: numbers.length
+        ? enrolled + ' of ' + numbers.length + ' students enrolled. ' + (numbers.length - enrolled
+            ? (numbers.length - enrolled === 1 ? '1 has' : (numbers.length - enrolled) + ' have') +
+              ' no account yet — kept on the list, and enrolled once they sign up and you retry.' : '')
+        : 'Add students from the class page.' });
+      reload();
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+    finally { setBusy(false); }
+  }
+
+  function loadCsv(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    file.text().then(t => setF(s => ({ ...s, numbers: (s.numbers ? s.numbers + '\n' : '') + parseNumbers(t).join('\n') })));
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Classes" onBack=${onBack} />
+      <div class="form-card">
+        <h3 style=${{ marginBottom: '12px' }}>New class</h3>
+        <${Field} label="Module code" icon="fa-book" value=${f.code} onChange=${set('code')} placeholder="ACC1241" />
+        <${Field} label="Class name" icon="fa-chalkboard" value=${f.title} onChange=${set('title')} placeholder="Financial Accounting" />
+        <${Field} label="Minimum attendance %" type="number" icon="fa-percent" value=${f.min} onChange=${set('min')} />
+        <${TextArea} label="Student numbers (one per line, or paste a CSV)" value=${f.numbers} onChange=${set('numbers')} />
+        <label class="btn btn-ghost btn-sm" style=${{ cursor: 'pointer' }}><${Icon} name="fa-file-import" /> Load a CSV file
+          <input type="file" accept=".csv,.txt" class="hidden" onChange=${loadCsv} /></label>
+        <p style=${{ fontSize: '.72rem', color: 'var(--text-faint)' }}>${parseNumbers(f.numbers).length} student numbers found</p>
+        <${Btn} busy=${busy} onClick=${create}><${Icon} name="fa-plus" /> Create class<//>
+        <${Status} msg=${msg} />
+      </div>
+      <div class="section-title"><h3>Your classes</h3></div>
+      <div class="page-pad" style=${{ paddingTop: 0 }}>
+        ${loading ? html`<${Loading} />` : error ? html`<${Status} msg=${{ kind: 'error', text: error }} />`
+          : !data.length ? html`<${Empty} icon="fa-users" title="No classes yet" />`
+          : data.map(c => html`
+            <div key=${c.id} class="class-card" onClick=${() => openClass(c)}>
+              <span class="tag">${c.code}</span>
+              <h4>${c.title}</h4>
+              <div class="meta">${(c.roster || []).length} on the list · needs ${c.min_attendance_pct}%</div>
+            </div>`)}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+function ClassDetail({ course, onBack }) {
+  const toast = useToast();
+  const enrolled = useLoad(() => api.enrolled(course.id), [course.id]);
+  const [roster, setRoster] = useState(course.roster || []);
+  const [add, setAdd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const signed = new Set((enrolled.data || []).map(e => e.aa_profiles && e.aa_profiles.student_number));
+  const pending = roster.filter(n => !signed.has(n));
+
+  async function addNumbers(list) {
+    setBusy(true);
+    const next = [...new Set([...roster, ...list])];
+    try {
+      await api.updateCourse(course.id, { roster: next });
+      setRoster(next);
+      let ok_ = 0;
+      for (const n of list) { try { await api.enrol(course.id, n); ok_++; } catch (e) {} }
+      toast(ok_ + ' enrolled' + (list.length - ok_ ? ', ' + (list.length - ok_) + ' waiting for an account' : ''), 'success');
+      enrolled.reload();
+    } catch (e) { toast(friendly(e), 'error'); }
+    finally { setBusy(false); }
+  }
+
+  async function removeStudent(e) {
+    if (!confirm('Remove ' + (e.aa_profiles?.display_name || 'this student') + ' from the class?')) return;
+    try {
+      await api.unenrol(course.id, e.student_id);
+      const next = roster.filter(n => n !== e.aa_profiles?.student_number);
+      await api.updateCourse(course.id, { roster: next }); setRoster(next);
+      enrolled.reload();
+    } catch (err) { toast(friendly(err), 'error'); }
+  }
+
+  async function del() {
+    if (!confirm('Delete ' + course.code + '? Its sessions and register go with it.')) return;
+    try { await api.deleteCourse(course.id); toast('Class deleted'); onBack(); }
+    catch (e) { toast(friendly(e), 'error'); }
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title=${course.code} onBack=${onBack}
+        right=${html`<button class="icon-btn" onClick=${del}><${Icon} name="fa-trash" /></button>`} />
+      <div class="form-card">
+        <h3>${course.title}</h3>
+        <p style=${HINT}>${(enrolled.data || []).length} enrolled · ${pending.length} waiting to sign up · needs ${course.min_attendance_pct}%</p>
+        <${TextArea} label="Add student numbers" value=${add} onChange=${e => setAdd(e.target.value)} />
+        <${Btn} busy=${busy} onClick=${() => { const l = parseNumbers(add); if (l.length) { addNumbers(l); setAdd(''); } }}>
+          <${Icon} name="fa-user-plus" /> Add ${parseNumbers(add).length || ''}<//>
+        ${pending.length ? html`<${Btn} kind="ghost" small busy=${busy} onClick=${() => addNumbers(pending)}>
+          <${Icon} name="fa-rotate" /> Retry enrolling the ${pending.length} waiting<//>` : null}
+      </div>
+      <div class="section-title"><h3>Enrolled</h3></div>
+      <div class="page-pad" style=${{ paddingTop: 0 }}>
+        ${enrolled.loading ? html`<${Loading} />` : !(enrolled.data || []).length ? html`<${Empty} icon="fa-user-graduate" title="Nobody enrolled yet" />`
+          : enrolled.data.map(e => html`
+            <div key=${e.student_id} class="stud-row">
+              <div class="stud-avatar">${(e.aa_profiles?.display_name || '?').split(/\s+/).map(w => w[0]).slice(0, 2).join('')}</div>
+              <div style=${{ flex: 1 }}><h4>${e.aa_profiles?.display_name}</h4><div class="meta">${e.aa_profiles?.student_number}</div></div>
+              <button class="icon-btn" onClick=${() => removeStudent(e)}><${Icon} name="fa-user-minus" /></button>
+            </div>`)}
+        ${pending.length ? html`
+          <div class="section-title" style=${{ margin: '20px 0 10px' }}><h3>No account yet</h3></div>
+          ${pending.map(n => html`<div key=${n} class="stud-row"><div class="stud-avatar">?</div>
+            <div style=${{ flex: 1 }}><h4>${n}</h4><div class="meta">On your list — enrolled automatically once you retry after they sign up</div></div></div>`)}` : null}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer: venues
+
+function VenueEditor({ onDone }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const mapEl = useRef(null);
+  const map = useRef(null);
+  const layer = useRef(null);
+  const [pts, setPts] = useState([]);
+  const [name, setName] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (typeof L === 'undefined') { setMsg({ kind: 'error', text: 'The map failed to load — check your connection.' }); return; }
+    const m = L.map(mapEl.current, { zoomControl: true }).setView(UNIVEN_CENTRE, 17);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '© OpenStreetMap' }).addTo(m);
+    m.on('click', e => setPts(p => [...p, { lat: e.latlng.lat, lng: e.latlng.lng }]));
+    map.current = m;
+    setTimeout(() => m.invalidateSize(), 200);
+    return () => { m.remove(); map.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const m = map.current; if (!m) return;
+    if (layer.current) layer.current.remove();
+    const g = L.layerGroup();
+    pts.forEach(p => L.circleMarker([p.lat, p.lng], { radius: 5, color: '#0b6b3a' }).addTo(g));
+    if (pts.length >= 2) L.polygon(pts.map(p => [p.lat, p.lng]), { color: '#0b6b3a', weight: 2, fillOpacity: .15 }).addTo(g);
+    g.addTo(m); layer.current = g;
+  }, [pts]);
+
+  async function here() {
+    setMsg({ kind: 'info', text: 'Reading your location…' });
+    try {
+      const fix = await currentFix();
+      setPts(p => [...p, { lat: fix.lat, lng: fix.lng }]);
+      map.current && map.current.setView([fix.lat, fix.lng], 19);
+      setMsg({ kind: 'success', text: 'Corner added (±' + Math.round(fix.accuracy) + 'm). Walk to the next corner and add again.' });
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+  }
+
+  async function save() {
+    if (!name.trim()) return setMsg({ kind: 'error', text: 'Name the venue.' });
+    if (pts.length < 3) return setMsg({ kind: 'error', text: 'An outline needs at least 3 corners.' });
+    setBusy(true);
+    try {
+      const centroid = polygonCentroid(pts);
+      const radius = Math.round(Math.max(...pts.map(p => haversineMeters(p.lat, p.lng, centroid.lat, centroid.lng))));
+      await api.createVenue({ name: name.trim(), polygon: pts, centroid, radius_meters: Math.max(25, radius), created_by: profile.id });
+      toast('Venue saved', 'success'); onDone();
+    } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+    finally { setBusy(false); }
+  }
+
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Draw a Venue" onBack=${onDone} />
+      <div class="page-pad">
+        <p style=${HINT}>Tap the map at each corner of the building, or stand at each corner and use "Add where I am".</p>
+        <div class="venue-map-wrap" ref=${mapEl} style=${{ height: '340px', borderRadius: 'var(--r-md)', overflow: 'hidden' }} />
+        <div style=${{ display: 'flex', gap: '8px', margin: '10px 0' }}>
+          <${Btn} kind="ghost" small onClick=${here}><${Icon} name="fa-location-crosshairs" /> Add where I am<//>
+          <${Btn} kind="ghost" small disabled=${!pts.length} onClick=${() => setPts(p => p.slice(0, -1))}><${Icon} name="fa-rotate-left" /> Undo<//>
+          <${Btn} kind="ghost" small disabled=${!pts.length} onClick=${() => setPts([])}><${Icon} name="fa-eraser" /> Clear<//>
+        </div>
+        <p style=${{ fontSize: '.75rem', color: 'var(--text-faint)' }}>${pts.length} corner${pts.length === 1 ? '' : 's'}</p>
+        <${Field} label="Venue name" icon="fa-building" value=${name} onChange=${e => setName(e.target.value)} placeholder="e.g. Sci-Tech A" />
+        <${Btn} busy=${busy} onClick=${save}><${Icon} name="fa-floppy-disk" /> Save venue<//>
+        <${Status} msg=${msg} />
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+function Venues({ onBack }) {
+  const toast = useToast();
+  const { profile } = useAuth();
+  const { data, loading, error, reload } = useLoad(api.venues, []);
+  const [drawing, setDrawing] = useState(false);
+  if (drawing) return html`<${VenueEditor} onDone=${() => { setDrawing(false); reload(); }} />`;
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Venues" onBack=${onBack} />
+      <div class="page-pad">
+        <${Btn} onClick=${() => setDrawing(true)}><${Icon} name="fa-draw-polygon" /> Draw a new venue<//>
+        <p style=${HINT}>A drawn outline is the backup check: it decides attendance when the room cannot.</p>
+        ${loading ? html`<${Loading} />` : error ? html`<${Status} msg=${{ kind: 'error', text: error }} />`
+          : !data.length ? html`<${Empty} icon="fa-map-location-dot" title="No venues yet" />`
+          : data.map(v => html`
+            <div key=${v.id} class="class-card" style=${{ display: 'flex', alignItems: 'center' }}>
+              <div style=${{ flex: 1 }}><h4>${v.name}</h4><div class="meta">${(v.polygon || []).length} corners · ~${v.radius_meters}m across</div></div>
+              ${v.created_by === profile.id || !v.created_by ? html`<button class="icon-btn" onClick=${async () => {
+                if (!confirm('Delete ' + v.name + '?')) return;
+                try { await api.deleteVenue(v.id); reload(); } catch (e) { toast(friendly(e), 'error'); }
+              }}><${Icon} name="fa-trash" /></button>` : null}
+            </div>`)}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer: reports, updates
+
+function Reports() {
+  const { profile } = useAuth();
+  const courses = useLoad(() => api.myCourses(profile.id), [profile.id]);
+  const [courseId, setCourseId] = useState('');
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  const course = (courses.data || []).find(c => c.id === courseId);
+
+  useEffect(() => {
+    if (!courseId && courses.data && courses.data.length) setCourseId(courses.data[0].id);
+  }, [courses.data]);
+  useEffect(() => {
+    if (!courseId) return;
+    setRows(null); setErr(null);
+    api.report(courseId).then(setRows).catch(e => setErr(friendly(e)));
+  }, [courseId]);
+
+  const atRisk = (rows || []).filter(r => r.at_risk).length;
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Reports"
+        right=${rows && rows.length ? html`<button class="icon-btn" onClick=${() => downloadCsv((course ? course.code : 'report') + '-attendance.csv', [
+          ['student_number', 'name', 'sessions', 'present', 'unresolved', 'absent', 'excused', 'percent', 'worst_case_percent', 'meets_requirement'],
+          ...rows.map(r => [r.student_number, r.display_name, r.sessions_counted, r.present, r.unresolved, r.absent, r.excused, r.percent, r.worst_case_percent, r.meets_requirement])])}>
+          <${Icon} name="fa-file-csv" /></button>` : null} />
+      <div class="page-pad">
+        ${courses.data && !courses.data.length ? html`<${Empty} icon="fa-chart-pie" title="No classes yet" text="Reports cover classes, so create one first." />` : html`
+          <${Select} label="Class" value=${courseId} onChange=${e => setCourseId(e.target.value)}
+            options=${(courses.data || []).map(c => ({ value: c.id, label: c.code + ' · ' + c.title }))} />
+          <p style=${HINT}>Counts closed sessions only. "Worst case" treats every unresolved check-in as an absence —
+            the gap between the two columns is what still depends on your review.</p>
+          ${err ? html`<${Status} msg=${{ kind: 'error', text: err }} />` : !rows ? html`<${Loading} />`
+            : !rows.length ? html`<${Empty} icon="fa-user-graduate" title="Nobody enrolled" />` : html`
+            <div class="stat-grid" style=${{ margin: '10px 0' }}>
+              <div class="stat-box"><b>${rows.length}</b><span>students</span></div>
+              <div class="stat-box"><b>${atRisk}</b><span>at risk</span></div>
+            </div>
+            ${rows.map(r => html`
+              <div key=${r.student_id} class="stud-row">
+                <div style=${{ flex: 1 }}>
+                  <h4>${r.display_name}</h4>
+                  <div class="meta">${r.student_number} · ${r.present}/${r.sessions_counted} present${r.unresolved ? ' · ' + r.unresolved + ' unresolved' : ''}</div>
+                </div>
+                <div style=${{ textAlign: 'right' }}>
+                  <b>${r.percent == null ? '—' : Math.round(r.percent) + '%'}</b>
+                  <div class="meta">worst ${r.worst_case_percent == null ? '—' : Math.round(r.worst_case_percent) + '%'}</div>
+                  <span class=${'badge ' + (r.meets_requirement ? 'present' : r.at_risk ? 'absent' : 'late')}>
+                    ${r.meets_requirement ? 'On track' : r.at_risk ? 'At risk' : 'Pending'}</span>
+                </div>
+              </div>`)}`}`}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+function PostUpdate({ onBack }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const courses = useLoad(() => api.myCourses(profile.id), [profile.id]);
+  const mine = useLoad(() => api.myUpdates(profile.id), [profile.id]);
+  const [f, setF] = useState({ title: '', body: '', courseId: '' });
+  const [msg, setMsg] = useState(null);
+  return html`
+    <div class="screen active">
+      <${Topbar} title="Post an Update" onBack=${onBack} />
+      <div class="form-card">
+        <${Select} label="Audience" value=${f.courseId} onChange=${e => setF({ ...f, courseId: e.target.value })}
+          options=${[{ value: '', label: 'Everyone' }, ...(courses.data || []).map(c => ({ value: c.id, label: c.code + ' students' }))]} />
+        <${Field} label="Title" icon="fa-heading" value=${f.title} onChange=${e => setF({ ...f, title: e.target.value })} />
+        <${TextArea} label="Message" value=${f.body} onChange=${e => setF({ ...f, body: e.target.value })} />
+        <${Btn} onClick=${async () => {
+          if (!f.title.trim() || !f.body.trim()) return setMsg({ kind: 'error', text: 'Add a title and a message.' });
+          try {
+            await api.postUpdate({ title: f.title.trim(), body: f.body.trim(), posted_by: profile.id,
+              course_id: f.courseId || null, meta: { postedBy: profile.display_name } });
+            setF({ title: '', body: '', courseId: f.courseId }); toast('Posted', 'success'); mine.reload();
+          } catch (e) { setMsg({ kind: 'error', text: friendly(e) }); }
+        }}><${Icon} name="fa-paper-plane" /> Post<//>
+        <${Status} msg=${msg} />
+      </div>
+      <div class="section-title"><h3>Your recent posts</h3></div>
+      <div class="page-pad" style=${{ paddingTop: 0 }}>
+        ${(mine.data || []).map(n => html`
+          <div key=${n.id} class="notif-item" style=${{ display: 'flex' }}>
+            <div style=${{ flex: 1 }}><h4>${n.title}</h4><p>${n.body}</p><span class="time">${fmtWhen(n.created_at)}</span></div>
+            <button class="icon-btn" onClick=${async () => { await api.deleteUpdate(n.id); mine.reload(); }}><${Icon} name="fa-trash" /></button>
+          </div>`)}
+      </div>
+      <div style=${{ height: '100px' }} />
+    </div>`;
+}
+
+// ===================================================================== lecturer app
+
+function LecturerApp() {
+  const [screen, setScreen] = useState('dash');
+  const [session, setSession] = useState(null);
+  const [course, setCourse] = useState(null);
+  const [template, setTemplate] = useState(null);
+  const home = () => setScreen('dash');
+
+  const nav = [
+    { id: 'dash', icon: 'fa-chart-pie', label: 'Dashboard' },
+    { id: 'create', icon: 'fa-qrcode', label: 'Create' },
+    { id: 'reports', icon: 'fa-chart-column', label: 'Reports' },
+    { id: 'profile', icon: 'fa-user', label: 'Profile' }
+  ];
+  const go = id => { if (id === 'create') setTemplate(null); setScreen(id); };
+
+  return html`<${React.Fragment}>
+    ${screen === 'dash' ? html`<${Dashboard} go=${go}
+        openSession=${s => { setSession(s); setScreen('live'); }}
+        useTemplate=${t => { setTemplate(t); setScreen('create'); }} />` : null}
+    ${screen === 'create' ? html`<${CreateSession} key=${template ? template.id : 'new'} template=${template} onBack=${home}
+        onCreated=${s => { setSession(s); setScreen('live'); }} />` : null}
+    ${screen === 'live' && session ? html`<${LiveSession} key=${session.id} session=${session} onBack=${home} />` : null}
+    ${screen === 'classes' ? html`<${Classes} onBack=${home} openClass=${c => { setCourse(c); setScreen('class'); }} />` : null}
+    ${screen === 'class' && course ? html`<${ClassDetail} course=${course} onBack=${() => setScreen('classes')} />` : null}
+    ${screen === 'venues' ? html`<${Venues} onBack=${home} />` : null}
+    ${screen === 'reports' ? html`<${Reports} />` : null}
+    ${screen === 'post' ? html`<${PostUpdate} onBack=${home} />` : null}
+    ${screen === 'edit' ? html`<${EditName} onBack=${() => setScreen('profile')} />` : null}
+    ${screen === 'password' ? html`<${ChangePassword} onBack=${() => setScreen('profile')} />` : null}
+    ${screen === 'profile' ? html`<${ProfileScreen} go=${setScreen} extraRows=${html`
+      <div class="settings-row" onClick=${() => setScreen('classes')}><${Icon} name="fa-users" /><span>Classes</span><${Icon} name="fa-chevron-right chev" /></div>
+      <div class="settings-row" onClick=${() => setScreen('venues')}><${Icon} name="fa-draw-polygon" /><span>Venues</span><${Icon} name="fa-chevron-right chev" /></div>
+      <div class="settings-row" onClick=${() => setScreen('post')}><${Icon} name="fa-bullhorn" /><span>Post an update</span><${Icon} name="fa-chevron-right chev" /></div>`} />` : null}
+    <${BottomNav} items=${nav} current=${screen} onGo=${go} />
+  <//>`;
+}
+
+// ===================================================================== root
+
+function Splash() {
+  return html`
+    <div class="screen active auth-screen">
+      <div class="splash-crest"><${Icon} name="fa-graduation-cap" /></div>
+      <div class="splash-title">UNIVEN Attendance</div>
+      <div class="splash-sub">Checking your session…</div>
+      <div class="splash-loader"><div class="spin" /></div>
+    </div>`;
+}
+
+/* Which door someone came in through. The account's own role decides which
+   app opens, but if that disagrees with the door they chose, they are told -
+   otherwise signing in on the Student screen with a lecturer account just
+   silently lands on the lecturer dashboard, with no hint why. */
+const EXPECTED_KEY = 'uvn_expected_role';
+const readExpected = () => { try { return sessionStorage.getItem(EXPECTED_KEY); } catch (e) { return null; } };
+const writeExpected = v => { try { v ? sessionStorage.setItem(EXPECTED_KEY, v) : sessionStorage.removeItem(EXPECTED_KEY); } catch (e) {} };
+
+function RoleMismatch({ expected, profile, email, onSignOut, onContinue }) {
+  const is = profile.role === 'lecturer' ? 'a lecturer' : 'a student';
+  const door = expected === 'lecturer' ? 'Lecturer' : 'Student';
+  return html`
+    <div class="screen active auth-screen">
+      <div class="form-card">
+        <div class="result-icon warn"><${Icon} name="fa-triangle-exclamation" /></div>
+        <h3>This is ${is} account</h3>
+        <p style=${HINT}>You signed in on the <b>${door}</b> screen, but <b>${email}</b>
+          ${profile.display_name ? ' (' + profile.display_name + ')' : ''} is registered as ${is}.
+          One account has one role, so it cannot open the ${door.toLowerCase()} view.</p>
+        <${Btn} onClick=${onSignOut}><${Icon} name="fa-arrow-right-from-bracket" /> Sign out and use ${expected === 'lecturer' ? 'a lecturer' : 'a student'} account<//>
+        <${Btn} kind="ghost" onClick=${onContinue}>Open the ${profile.role} view instead<//>
+      </div>
+    </div>`;
 }
 
 function Root() {
-  const { loading, user, profile } = useAuth();
+  const { loading, user, profile, signOut } = useAuth();
   const [role, setRole] = useState(null);
+  const [expected, setExpected] = useState(readExpected);
+
+  const pick = r => { setRole(r); setExpected(r); writeExpected(r); };
+  const forget = () => { setExpected(null); writeExpected(null); };
+
+  // once the account and the door agree, the choice has done its job
+  useEffect(() => { if (profile && expected && profile.role === expected) forget(); }, [profile, expected]);
 
   if (loading) return html`<${Splash} />`;
-  if (!user) {
-    return role === 'student'
-      ? html`<${StudentAuth} onBack=${() => setRole(null)} />`
-      : html`<${RolePicker} onStudent=${() => setRole('student')} />`;
-  }
-  if (!profile) return html`<${FinishProfile} />`;
-  if (profile.role !== 'student') {
-    return html`
-      <div class="screen active auth-screen">
-        <div class="form-card">
-          <h3>Lecturer account</h3>
-          <p class="splash-sub">The lecturer screens are not part of this React
-            pass yet — open <b>univen.html</b> for those.</p>
-          <${Btn} kind="ghost" onClick=${() => api.signOut()}>Sign out<//>
-        </div>
-      </div>`;
-  }
-  return html`<${StudentApp} />`;
+  if (!user) return role
+    ? html`<${AuthScreen} role=${role} onBack=${() => setRole(null)} />`
+    : html`<${RolePicker} onPick=${pick} />`;
+  if (!profile) return html`<${FinishProfile} defaultRole=${expected || 'student'} />`;
+  if (expected && profile.role !== expected) return html`<${RoleMismatch}
+    expected=${expected} profile=${profile} email=${user.email}
+    onSignOut=${async () => { setRole(expected); await signOut(); }}
+    onContinue=${forget} />`;
+  return profile.role === 'lecturer' ? html`<${LecturerApp} />` : html`<${StudentApp} />`;
 }
 
-ReactDOM.createRoot(document.getElementById('root'))
-  .render(html`<${AuthProvider}><${Root} /><//>`);
+/** One screen failing should not blank the whole app. */
+class Boundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err) { console.error(err); }
+  render() {
+    if (!this.state.err) return this.props.children;
+    return html`<div class="screen active auth-screen"><div class="form-card">
+      <h3>Something went wrong</h3>
+      <p style=${HINT}>${String(this.state.err.message || this.state.err)}</p>
+      <button class="btn btn-primary" onClick=${() => location.reload()}>Reload</button>
+    </div></div>`;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(html`
+  <${Boundary}>
+    <${ToastProvider}>
+      <${AuthProvider}>
+        <div class="frame" id="frame"><${Root} /></div>
+      <//>
+    <//>
+  <//>`);
 
 </script>
 </body>

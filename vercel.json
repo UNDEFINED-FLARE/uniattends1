@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "echo 'static site: nothing to install'",
+  "buildCommand": "echo 'static site: nothing to build'",
+  "outputDirectory": ".",
+  "rewrites": [
+    { "source": "/", "destination": "/univen-react.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Permissions-Policy", "value": "microphone=(self), geolocation=(self), camera=(self)" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    }
+  ]
+}
